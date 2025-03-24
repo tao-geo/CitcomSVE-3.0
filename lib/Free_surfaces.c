@@ -3197,10 +3197,18 @@ char input_s[1000];
 FILE *fp2;
 
 void  parallel_process_termination();
-int llmax,ll,mm,i,j,j1,node;
-double sqrt2,tempc,temps;
-double modified_plgndr_a(),con,t1,f1;
+int llmax,ll,mm,i,j,j1,node,ll1,ll2;
+double sqrt2,tempc,temps,temp1;
+static double *clm,*slm,*plm_ll,*plm_ll_1,*plm_ll_2,*cosmf,*sinmf;
+double modified_plgndr_a(),con,t1,f1,x1,y1;
+double twoll, fourl2m1, fact1, fact2, llm1_2;
 static int been_here=0;
+const double two = 2.0;
+const double three = 3.0;
+
+double time1,time2,CPU_time0();
+
+time1=CPU_time0();
 
    if ( (fp2=fopen(outfile,"r"))==NULL)   {
       fprintf(stderr,"ERROR(read_reg_grids)- file %s not found\n",outfile);
@@ -3212,15 +3220,28 @@ static int been_here=0;
 
    fgets(input_s,1000,fp2);
    sscanf(input_s,"%d",&llmax);
+   
+//   llmax=200;
 
-  for (j=1;j<=E->sphere.caps_per_proc;j++)
-    for (j1=1;j1<=E->lmesh.nsf;j1++)   
-      field[j][j1]=0.0;
+   j = (llmax+1)*(llmax+2)/2;
+   if (been_here==0)  {
+      clm = (double*)malloc((j+2)*sizeof(double));
+      slm = (double*)malloc((j+2)*sizeof(double));
+      plm_ll = (double*)malloc((llmax+2)*sizeof(double));
+      plm_ll_1 = (double*)malloc((llmax+2)*sizeof(double));
+      plm_ll_2 = (double*)malloc((llmax+2)*sizeof(double));
+      cosmf = (double*)malloc((llmax+2)*sizeof(double));
+      sinmf = (double*)malloc((llmax+2)*sizeof(double));
+      been_here = 1;
+   }
 
+  //read in clm and slm
+  i = 0;
   for (ll=0;ll<=llmax;ll++)
     for (mm=0; mm<=ll; mm++)   {
+      i = i+1;
       fgets(input_s,1000,fp2);
-      sscanf(input_s,"%d %d %lf %lf",&i,&i,&tempc,&temps);
+      sscanf(input_s,"%d %d %lf %lf",&j,&j,&tempc,&temps);
  	// to turn Jackson Clm and Slm to SVE's
       if (mm==0) {
          temps=-temps;
@@ -3229,17 +3250,73 @@ static int been_here=0;
          tempc= sqrt2*tempc;
          temps=-sqrt2*temps;
       }
-      for (j=1;j<=E->sphere.caps_per_proc;j++)
-      for (j1=1;j1<=E->lmesh.nsf;j1++)   {
-        node = j1*E->lmesh.noz;
-        t1=E->sx[j][1][node];
-        f1=E->sx[j][2][node];
-
-        field[j][j1]+=(tempc*cos(mm*f1)+temps*sin(mm*f1))*modified_plgndr_a(ll,mm,t1);
-        }
-   }
-
+      clm[i] = tempc;
+      slm[i] = temps;
+    }
    fclose(fp2);
+
+
+  for (j=1;j<=E->sphere.caps_per_proc;j++)
+    for (j1=1;j1<=E->lmesh.nsf;j1++)   
+      field[j][j1]=0.0;
+
+  for (j=1;j<=E->sphere.caps_per_proc;j++)
+  for (j1=1;j1<=E->lmesh.nsf;j1++)   {
+      node = j1*E->lmesh.noz;
+      t1=E->sx[j][1][node];
+      f1=E->sx[j][2][node];
+      x1 = cos(t1);
+      for (mm=0; mm<=llmax; mm++)   {
+         cosmf[mm] = cos(mm*f1);
+         sinmf[mm] = sin(mm*f1);
+         }
+      i = 0;
+      for (ll=0;ll<=llmax;ll++) {
+
+	twoll= two*ll;
+	fourl2m1 = twoll*twoll-1.0;    // 4l^2-1
+	fact1 = (twoll+1.0)/(twoll-three);  // (2l+1)/(2l-3)
+        llm1_2 = ll*ll-twoll+1.0;   // (l-1)*(l-1)
+        for (mm=0; mm<=ll; mm++)   {
+           i = i+1;
+	   fact2 = (double)(ll-mm)/(double)(ll+mm);
+	   if (mm==ll) 
+ 	      plm_ll[mm]=modified_plgndr_a(ll,mm,t1);
+	   else if (mm==ll-1)
+ 	      plm_ll[mm]=x1*sqrt(two*mm+three)*plm_ll_1[mm];
+	   else if (mm<ll-1) {
+              plm_ll[mm]=x1*sqrt(fourl2m1*fact2)*plm_ll_1[mm] 
+		      - sqrt(fact1*fact2*(llm1_2-mm*mm))*plm_ll_2[mm];
+	      plm_ll[mm]=plm_ll[mm]/(ll-mm);
+	      }
+
+           field[j][j1]+=(clm[i]*cosmf[mm]+slm[i]*sinmf[mm])*plm_ll[mm];
+        } // end for mm
+	 
+	// swap and redefine plm_ll_2, and plm_ll_1 for next ll, 
+        for (mm=0; mm<ll; mm++) 
+ 	   plm_ll_2[mm]=plm_ll_1[mm];
+        for (mm=0; mm<=ll; mm++)  
+ 	   plm_ll_1[mm]=plm_ll[mm];
+
+     }   // end for ll
+   }    // end for j1 or surface node
+	//
+/*  fprintf(E->fp_out,"icestage %d\n",E->ve_data_cont.stage);
+  for (j=1;j<=E->sphere.caps_per_proc;j++)
+    for (j1=1;j1<=E->lmesh.nsf;j1++)  { 
+      fprintf(E->fp_out,"%d %.5e\n",j1,field[j][j1]);
+    }
+  fflush(E->fp_out);
+
+time2=CPU_time0();
+if (E->parallel.me==0) {
+	fprintf(stderr,"CPU_time for ice model %g seconds\n",time2-time1);
+        fprintf(E->fp,"CPU_time for ice model %g seconds\n",time2-time1);
+	fflush(E->fp);
+}
+*/
+
   return;
   }
 
