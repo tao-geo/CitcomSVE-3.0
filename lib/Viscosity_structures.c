@@ -674,8 +674,8 @@ void visc_from_file(E)
         fgets(input_s,200,fp1);
         sscanf(input_s,"%g",&temp1);
         // visc_reg[k] = log10f(temp1);       // another possibility is visc_reg[k] = log10f(temp1);
-//        visc_reg[k] = 1/temp1;       // use Harmonic Mean
-        visc_reg[k] = temp1;      
+       visc_reg[k] = 1/temp1;       // use Harmonic Mean
+        // visc_reg[k] = temp1;      
         }
 
       if (i1!=i2) {     // read one more layer and interpolate radially
@@ -689,8 +689,8 @@ void visc_from_file(E)
           fgets(input_s,200,fp1);
           sscanf(input_s,"%g",&temp3);
           // visc_reg[k] = visc_reg[k]*temp1 + log10f(temp3)*temp2;  // also use log10f here if used above
-//          visc_reg[k] = visc_reg[k]*temp1 + 1/temp3*temp2;  // use Harmonic Mean
-          visc_reg[k] = visc_reg[k]*temp1 + temp3*temp2;  // use Harmonic Mean
+         visc_reg[k] = visc_reg[k]*temp1 + 1/temp3*temp2;  // use Harmonic Mean
+          // visc_reg[k] = visc_reg[k]*temp1 + temp3*temp2;  // use Harmonic Mean
           }
         }
       fclose(fp1);
@@ -705,8 +705,8 @@ void visc_from_file(E)
                 + visc_FE[m][E->sien[m][ee].node[3]] 
                 + visc_FE[m][E->sien[m][ee].node[4]])/4.0; 
          el = jj + (j-1)*E->lmesh.elz + (i-1)*E->lmesh.elz*E->lmesh.elx;
-	 E->evi_o[E->mesh.levmax][m][el] = temp1/E->data.ref_viscosity;
-//	 E->evi_o[E->mesh.levmax][m][el] = 1.0/temp1/E->data.ref_viscosity;
+	//  E->evi_o[E->mesh.levmax][m][el] = temp1/E->data.ref_viscosity;
+	 E->evi_o[E->mesh.levmax][m][el] = 1.0/temp1/E->data.ref_viscosity;
             // E->evi_o[E->mesh.levmax][m][el] = pow(10,temp1)/E->data.ref_viscosity;  // use power if log10 used above
          }
 
@@ -801,14 +801,14 @@ void elastic_model_from_file_3D(E,element_var1, element_var2,filename, normaliza
       rr = (E->sx[m][3][jj]+E->sx[m][3][jj+1])/2.0;
 
       if (rr>=radius_visc[ndepth]) {
-//          continue;
-        i1 = ndepth;
-        i2 = ndepth;
+         continue;
+        // i1 = ndepth;
+        // i2 = ndepth;
         }
       else if (rr<=radius_visc[1])  {
-//        continue;
-         i1=1;
-         i2=1;
+       continue;
+        //  i1=1;
+        //  i2=1;
         }
       else {
         for (i=1;i<ndepth;i++)  {
