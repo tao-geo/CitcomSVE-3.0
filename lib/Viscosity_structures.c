@@ -1092,7 +1092,7 @@ void visc_from_S(E,EEta,propogate)
     if (been_here==0)  {
       for(m=1;m<=E->sphere.caps_per_proc;m++)  
         for(e=1;e<=nel;e++)/* initialize with unity if no velocities around */
-          E->S2inv[m][e] = 1.0;
+          E->S2inv[m][e] = 0.0;  // change from 1.0 to 0.0 (Tao)
       been_here = 1;
       }
     else 
@@ -1108,6 +1108,13 @@ void visc_from_S(E,EEta,propogate)
            temp2 = E->viscosity.sdepv_bg[l]/E->viscosity.sdepv_trns[l];
            scale1=(one+pow(temp2,exponent1));
            scale = scale*scale1;
+
+            // // print out viscosity for debugging
+            // if(E->parallel.me==1) {
+            //   fprintf(E->fp_out,"%d %d %e %e %e %e %e %e\n",e,E->mat[m][e], E->viscosity.sdepv_bg[l],
+            //     E->viscosity.sdepv_trns[l], E->viscosity.sdepv_expt[l], E->S2inv[m][e], EEta[m][(e-1)*vpts + 1],scale);
+            // }
+            // // fflush(E->fp_out);
 
            for(jj=1;jj<=vpts;jj++)
                 EEta[m][(e-1)*vpts + jj] = scale*EEta[m][(e-1)*vpts + jj];
@@ -1703,11 +1710,18 @@ void stress_2_inv(E,eedot,SQRT,iterate)
       }
 
       /*
-      Concern: For iteration == 1, i.e., the second iteration, the EVolder is 1 for all elements.
+      Concern: For iterate == 1, i.e., the second iteration, the EVolder is 1 for all elements.
                 Is this good? Should we use Eold only for iteration == 1?
-                e.g. if (iteration == 1) visc1 = E->EVold[m][e];
+                e.g. if (iterate == 1) visc1 = E->EVold[m][e];
       */
-      visc1=onep_alpha*E->EVolder[m][e]+alpha*E->EVold[m][e];
+      if (iterate <= 2)
+        visc1=E->EVold[m][e];  // for the first nonlinear iteration, only EVold is available?
+      else {
+        // visc1=onep_alpha*E->EVolder[m][e]+alpha*E->EVold[m][e];
+        visc1 = onep_alpha*log10(E->EVolder[m][e]) + alpha*log10(E->EVold[m][e]);
+        visc1 = pow(10.0,visc1);
+      }
+
       a = E->esmu_o[E->mesh.levmax][m][e]/(2.0*visc1)*E->advection.timestep; 
       visc0 = E->esmu_o[E->mesh.levmax][m][e]/(1.0+a);
       maxwell0=(1.0-a)/(1.0+a);
