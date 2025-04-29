@@ -143,15 +143,16 @@ if (  !E->viscosity.SDEPV  )   {
 
     count=0;
     do {
-      E->monitor.count=count; // add by tao;
-      assemble_forces(E,count);    
-      solve_constrained_flow_iterative(E);
+	  E->monitor.count=count; // add by tao;
+	  assemble_forces(E,count);
+		
+          solve_constrained_flow_iterative(E);
 
-      for (m=1;m<=E->sphere.caps_per_proc;m++)
-        for (i=0;i<neq;i++) {
-          delta_U[m][i] = E->U[m][i] - oldU[m][i];
-          oldU[m][i] = E->U[m][i];
-        }
+    for (m=1;m<=E->sphere.caps_per_proc;m++)
+	for (i=0;i<neq;i++) {
+	  delta_U[m][i] = E->U[m][i] - oldU[m][i];
+	  oldU[m][i] = E->U[m][i];
+	}
 
       dPW_mag = PW_mag = 0.0;
       if (E->ve_data_cont.polar_wander) {
@@ -168,12 +169,12 @@ if (  !E->viscosity.SDEPV  )   {
       dUdot_mag = dUdot_mag/Udot_mag;
 
       if(E->parallel.me==0) {
-        fprintf(stderr,"dU %.4e (%.4e) dPW %.4e (%.4e) for iteration %d\n",
-          dUdot_mag,Udot_mag,dPW_mag,PW_mag, count);
-              time=CPU_time0()-time0;
-        fprintf(E->fp,"!!! iteration=%d relative change %g  %g m0 m1 %g %g potl_d %g timestep %d elapse time %g\n",
-          count,dUdot_mag,dPW_mag,pwold[0],pwold[1],E->ve_data_cont.potential_vary_PW,E->monitor.solution_cycles,time);
-              fflush(E->fp);
+	fprintf(stderr,"dU %.4e (%.4e) dPW %.4e (%.4e) for iteration %d\n",
+		dUdot_mag,Udot_mag,dPW_mag,PW_mag, count);
+        time=CPU_time0()-time0;
+	fprintf(E->fp,"!!! iteration=%d relative change %g  %g m0 m1 %g %g potl_d %g timestep %d elapse time %g\n",
+		count,dUdot_mag,dPW_mag,pwold[0],pwold[1],E->ve_data_cont.potential_vary_PW,E->monitor.solution_cycles,time);
+        fflush(E->fp);
       }
 
       count++;
@@ -187,97 +188,61 @@ if (  !E->viscosity.SDEPV  )   {
 
 else if (E->viscosity.SDEPV ) {
 
-    count1 = 0;
-    E->viscosity.iterate=0;
+   count1 = 0;
+   E->viscosity.iterate=0;
 
 //   do {
       
-    // outer loop: viscosity update
-    do {
+     count=0;
+     do {
        get_system_viscosity(E,1,E->EVI[E->mesh.levmax],E->VI[E->mesh.levmax]);
        construct_stiffness_B_matrix(E);
 
-      // inner loop: with fixed viscosity
-       count=0;
-       do {
-          E->monitor.count=count; // add by tao;
-          assemble_forces(E,count);
-          solve_constrained_flow_iterative(E);
-  
-          for (m=1;m<=E->sphere.caps_per_proc;m++)
-          for (i=0;i<neq;i++) {
-            delta_U[m][i] = E->U[m][i] - oldU[m][i];
-            oldU[m][i] = E->U[m][i];
-          }
-  
-          dPW_mag = PW_mag = 0.0;
-          if (E->ve_data_cont.polar_wander) {
-            PW_mag = sqrt(pwold[0]*pwold[0] + pwold[1]*pwold[1]); 
-            dPW_mag = sqrt( ((E->ve_data_cont.PW_incr[0]-pwold[0])*(E->ve_data_cont.PW_incr[0]-pwold[0]))
-                          + ((E->ve_data_cont.PW_incr[1]-pwold[1])*(E->ve_data_cont.PW_incr[1]-pwold[1])) );
-            dPW_mag = dPW_mag/PW_mag;
-            pwold[0] = E->ve_data_cont.PW_incr[0];
-            pwold[1] = E->ve_data_cont.PW_incr[1];
-            }
-  
-          Udot_mag  = sqrt(global_vdot(E,oldU,oldU,E->mesh.levmax));
-          dUdot_mag = sqrt(global_vdot(E,delta_U,delta_U,E->mesh.levmax));
-          dUdot_mag = dUdot_mag/Udot_mag;
-  
-          Udot_mag1  = sqrt(global_vdot_e(E,oldU,oldU,E->mesh.levmax));
-          dUdot_mag1 = sqrt(global_vdot_e(E,delta_U,delta_U,E->mesh.levmax));
-          dUdot_mag1 = dUdot_mag1/Udot_mag1;
-    
-          if (E->parallel.me == 0) {
-            fprintf(stderr,
-                    "dU %.4e (%.4e) %.4e dPW %.4e (%.4e) for iteration %d\n",
-                    dUdot_mag, Udot_mag, dUdot_mag1, dPW_mag, PW_mag, count);
-            time = CPU_time0() - time0;
-            fprintf(E->fp,
-                    "!!! iteration=%d relative change %g %g %g m0 m1 %g %g "
-                    "timestep %d elapse time %g\n",
-                    count, dUdot_mag, dUdot_mag1, dPW_mag, pwold[0], pwold[1],
-                    E->monitor.solution_cycles, time);
-            fflush(E->fp);
-          }
-  
-          count++;
-       } while((count<50) && ((dUdot_mag > E->viscosity.sdepv_misfit) ) && E->ve_data_cont.SELFG);
+       assemble_forces(E,count);
+       solve_constrained_flow_iterative(E);
 
-       // check if nonlinear is converged
-       // use oldU1 to store the old solution of last outer iteration
-        for (m=1;m<=E->sphere.caps_per_proc;m++)
-          for (i=0;i<neq;i++) {
-            delta_U[m][i] = E->U[m][i] - oldU1[m][i];
-            oldU1[m][i] = E->U[m][i];
-          }
-        Udot_mag  = sqrt(global_vdot(E,oldU1,oldU1,E->mesh.levmax));
-        dUdot_mag = sqrt(global_vdot(E,delta_U,delta_U,E->mesh.levmax));
-        dUdot_mag = dUdot_mag/Udot_mag;
+       for (m=1;m<=E->sphere.caps_per_proc;m++)
+        for (i=0;i<neq;i++) {
+          delta_U[m][i] = E->U[m][i] - oldU[m][i];
+          oldU[m][i] = E->U[m][i];
+        }
 
-        Udot_mag1  = sqrt(global_vdot_e(E,oldU1,oldU1,E->mesh.levmax));
-        dUdot_mag1 = sqrt(global_vdot_e(E,delta_U,delta_U,E->mesh.levmax));
-        dUdot_mag1 = dUdot_mag1/Udot_mag1;
+       dPW_mag = PW_mag = 0.0;
+       if (E->ve_data_cont.polar_wander) {
+         PW_mag = sqrt(pwold[0]*pwold[0] + pwold[1]*pwold[1]); 
+         dPW_mag = sqrt( ((E->ve_data_cont.PW_incr[0]-pwold[0])*(E->ve_data_cont.PW_incr[0]-pwold[0]))
+                       + ((E->ve_data_cont.PW_incr[1]-pwold[1])*(E->ve_data_cont.PW_incr[1]-pwold[1])) );
+         dPW_mag = dPW_mag/PW_mag;
+         pwold[0] = E->ve_data_cont.PW_incr[0];
+         pwold[1] = E->ve_data_cont.PW_incr[1];
+         }
+
+       Udot_mag  = sqrt(global_vdot(E,oldU,oldU,E->mesh.levmax));
+       dUdot_mag = sqrt(global_vdot(E,delta_U,delta_U,E->mesh.levmax));
+       dUdot_mag = dUdot_mag/Udot_mag;
+
+       Udot_mag1  = sqrt(global_vdot_e(E,oldU,oldU,E->mesh.levmax));
+       dUdot_mag1 = sqrt(global_vdot_e(E,delta_U,delta_U,E->mesh.levmax));
+       dUdot_mag1 = dUdot_mag1/Udot_mag1;
 
        if (E->parallel.me == 0) {
          fprintf(stderr,
-                 "dU %.4e (%.4e) %.4e for Nonlinear iteration %d\n",
-                 dUdot_mag, Udot_mag, dUdot_mag1, E->viscosity.iterate);
+                 "dU %.4e (%.4e) %.4e dPW %.4e (%.4e) for iteration %d\n",
+                 dUdot_mag, Udot_mag, dUdot_mag1, dPW_mag, PW_mag, count);
          time = CPU_time0() - time0;
          fprintf(E->fp,
-                 "!!! Nonlinear iteration=%d relative change %g %g "
+                 "!!! iteration=%d relative change %g %g %g m0 m1 %g %g "
                  "timestep %d elapse time %g\n",
-                 E->viscosity.iterate, dUdot_mag, dUdot_mag1, 
+                 count, dUdot_mag, dUdot_mag1, dPW_mag, pwold[0], pwold[1],
                  E->monitor.solution_cycles, time);
          fflush(E->fp);
        }
 
-
+      count++;
       E->viscosity.iterate++;
 
-      // } while ( (count<50) && ((dUdot_mag1 > E->viscosity.sdepv_misfit) || (dPW_mag >0.03)) && E->ve_data_cont.SELFG);
-      // } while ( (count<50) && ((dUdot_mag1 > E->viscosity.sdepv_misfit) ) && E->ve_data_cont.SELFG);
-    } while ( (E->viscosity.iterate<50) && ((dUdot_mag1 > E->viscosity.sdepv_misfit) ) && ((dUdot_mag > E->viscosity.sdepv_misfit) ) && E->ve_data_cont.SELFG);
+    // } while ( (count<50) && ((dUdot_mag1 > E->viscosity.sdepv_misfit) || (dPW_mag >0.03)) && E->ve_data_cont.SELFG);
+      } while ( (count<50) && ((dUdot_mag1 > E->viscosity.sdepv_misfit) ) && E->ve_data_cont.SELFG);
 
   } // end for SDEPV 
 
