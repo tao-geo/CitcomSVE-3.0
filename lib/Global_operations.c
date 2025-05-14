@@ -600,6 +600,54 @@ double global_vdot_e(E,A,B,lev)
   return (prod);
    }
 
+/*
+   Get the dot product of two vectors A and B summed over surface nodes
+   A and B are vectors of global size, but only the surface nodes are used
+   */
+double global_vdot_surface(E,A,B,lev)
+   struct All_variables *E;
+   double **A,**B;
+   int lev;
+
+{
+  int m,a,i,node,e,j,neq,nel, k;
+  double prod, temp,temp1;
+
+  const int ends=enodes[E->mesh.nsd];
+
+    temp = 0.0;
+    prod = 0.0;
+
+  for (m=1;m<=E->sphere.caps_per_proc;m++)  {
+    nel=E->lmesh.nel;
+    temp1 = 0.0;
+    // only for surface cpus
+    if(E->parallel.me_loc[3] == E->parallel.nprocz - 1) {
+      // only for surface nodes
+      // loop through nodes
+      /*
+      for (i=1;i<=E->lmesh.noy;i++)
+        for (j=1;j<=E->lmesh.nox;j++)  {
+           node = k+(j-1)*E->lmesh.noz+(i-1)*E->lmesh.nox*E->lmesh.noz; 
+           */
+      for(i=1; i<=E->lmesh.noy; i++) {
+        for (j=1; j<=E->lmesh.nox; j++) {
+          node = E->lmesh.noz + (j-1)*E->lmesh.noz+(i-1)*E->lmesh.nox*E->lmesh.noz;
+          for (k=1; k<=E->mesh.nsd; k++) {
+            a = E->id[m][node].doff[k];
+            temp += A[m][a]*B[m][a];
+          }
+        }
+      }
+    }
+
+  }
+
+  MPI_Allreduce(&temp, &prod,1,MPI_DOUBLE,MPI_SUM,E->parallel.world);
+
+  return (prod);
+}
+
 double global_vdot(E,A,B,lev)
    struct All_variables *E;
    double **A,**B;

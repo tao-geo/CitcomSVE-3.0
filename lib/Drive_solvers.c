@@ -87,11 +87,13 @@ void general_equations_of_motions_solver(struct All_variables *E)
   void assemble_forces();
   void get_system_viscosity();
   void remove_rigid_rot();
+  double global_vdot_surface();
 
   float vmag;
 
   double Udot_mag, dUdot_mag,omega[3];
   double Udot_mag1, dUdot_mag1,omega1[3];
+  double Udot_mag2, dUdot_mag2;
   double PW_mag,dPW_mag;
   int m,count,count1,i,j,k;
 
@@ -225,10 +227,14 @@ else if (E->viscosity.SDEPV ) {
        dUdot_mag1 = sqrt(global_vdot_e(E,delta_U,delta_U,E->mesh.levmax));
        dUdot_mag1 = dUdot_mag1/Udot_mag1;
 
+       Udot_mag2 = sqrt(global_vdot_surface(E, oldU, oldU, E->mesh.levmax));
+       dUdot_mag2 = sqrt(global_vdot_surface(E, delta_U, delta_U, E->mesh.levmax));
+       dUdot_mag2 = dUdot_mag2/Udot_mag2;
+
        if (E->parallel.me == 0) {
          fprintf(stderr,
-                 "dU %.4e (%.4e) %.4e dPW %.4e (%.4e) for iteration %d\n",
-                 dUdot_mag, Udot_mag, dUdot_mag1, dPW_mag, PW_mag, count);
+                 "dU %.4e (%.4e) %.4e SurfU %.4e %.4e dPW %.4e (%.4e) for iteration %d\n",
+                 dUdot_mag, Udot_mag, dUdot_mag1, dUdot_mag2, Udot_mag2, dPW_mag, PW_mag, count);
          time = CPU_time0() - time0;
          fprintf(E->fp,
                  "!!! iteration=%d relative change %g %g %g m0 m1 %g %g "
