@@ -1083,6 +1083,8 @@ void visc_from_S(E,EEta,propogate)
     int m,e,l,z,jj,kk;
     static int been_here=0;
 
+    double visc_stress; // visc_stress is the updated viscosity from the stress formulation
+
     const int vpts = vpoints[E->mesh.nsd];
     const int nel = E->lmesh.nel;
 
@@ -1116,9 +1118,35 @@ void visc_from_S(E,EEta,propogate)
             // }
             // // fflush(E->fp_out);
 
-           for(jj=1;jj<=vpts;jj++)
-                EEta[m][(e-1)*vpts + jj] = scale*EEta[m][(e-1)*vpts + jj];
+           for(jj=1;jj<=vpts;jj++){
+              // EEta[m][(e-1)*vpts + jj] = scale*EEta[m][(e-1)*vpts + jj];
+              visc_stress = scale*EEta[m][(e-1)*vpts + jj]; // EEta should be overwritten by the 1D no-stress viscosity for every iteration!
+              // add a damping effect: visc_new = (visc_stress ^ 0.5) * (visc_old ^ 0.5), 
+              // where visc_stress is the updated viscosity from the stress formulation.
+              EEta[m][(e-1)*vpts + jj] = sqrt(visc_stress) * sqrt(E->EVold[m][e]); // E->EVold[m][e] is the old viscosity from the previous iteration (or step if first iteration?)
+           }
+          
+            
         }
+      
+      // output viscosity for debugging
+      // if (E->monitor.solution_cycles % 10 == 0){
+      //   // create a file 
+      //   char filename[200];
+      //   sprintf(filename, "%s.visc_debug.step_%d.iter_%d.cpu_%d",E->control.data_file, E->monitor.solution_cycles, E->viscosity.iterate, E->parallel.me);
+      //   FILE *fp = fopen(filename, "w");
+      //   if (fp == NULL) {
+      //     fprintf(stderr, "Error opening file %s\n", filename);
+      //     return;
+      //   }
+      //   for (m=1;m<=E->sphere.caps_per_proc;m++) {
+      //     for(e=1;e<=nel;e++)   {
+      //       fprintf(fp, "%d %d %e %e %e %e\n", e, E->mat[m][e], E->S2inv[m][e], E->evi_o[E->mesh.levmax][m][e], EEta[m][(e-1)*vpts + 1], E->EVold[m][e]);
+      //     }
+      //   }
+
+      //   fclose(fp);
+      // }
 
     return;
 }
