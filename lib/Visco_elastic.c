@@ -745,7 +745,7 @@ void print_surf_topo(struct All_variables *E,int ii)
        if (E->parallel.me==E->parallel.nprocz-1)  {
             sprintf( outfile,"%s.time_dep",E->control.data_file);
             fp2 = fopen(outfile,"w");
-            fprintf(fp2, "timestep, current year, dt, PW (x2), PW_incr (x2), eustatic_sea_level, barystatic_sea_level, surface net rotation (x3), CM_incr(x3), CM_incr_ice_static_ocean(x3) \n");
+            fprintf(fp2, "timestep, current year, dt, PW (x2), PW_incr (x2), eustatic_sea_level, RSL_c, surface net rotation (x3), CM_incr(x3), CM_incr_ice_static_ocean(x3) \n");
             }
 
         // write out mesh coordinates:
@@ -827,7 +827,7 @@ void print_surf_topo(struct All_variables *E,int ii)
                     E->ve_data_cont.tau_in_years*E->advection.timestep,  // length of timestep
                     E->ve_data_cont.PW[0],E->ve_data_cont.PW[1], // cumu. polar motion
                     E->ve_data_cont.PW_incr[0],E->ve_data_cont.PW_incr[1], // polar motion
-                    E->ve_data_cont.eustatic_sea_level, E->ve_data_cont.barystatic_sea_level, // RSL (m)
+                    E->ve_data_cont.eustatic_sea_level, E->ve_data_cont.RSL_c, // RSL (m)
                     E->ve_data_cont.Omega_surface[0], E->ve_data_cont.Omega_surface[1], E->ve_data_cont.Omega_surface[2], // Surface Net rotation rate, deg/yr
                     E->ve_data_cont.CM_incr[0],E->ve_data_cont.CM_incr[1],E->ve_data_cont.CM_incr[2],       // CM_incr
                     E->ve_data_cont.CM_incr_ice_static_ocean[0], E->ve_data_cont.CM_incr_ice_static_ocean[1],E->ve_data_cont.CM_incr_ice_static_ocean[2]);															
@@ -1012,7 +1012,7 @@ void print_surf_topo_comp(struct All_variables *E,int ii)
 	if (E->parallel.me==E->parallel.nprocz-1)  {
             sprintf( outfile,"%s.time_dep",E->control.data_file);
             fp2 = fopen(outfile,"w");
- 	    fprintf(fp2, "timestep, current year, dt, PW (x2), PW_incr (x2), eustatic_sea_level, barystatic_sea_level, surface net rotation (x3), CM_incr(x3), CM_incr_ice_static_ocean(x3) \n");
+ 	    fprintf(fp2, "timestep, current year, dt, PW (x2), PW_incr (x2), eustatic_sea_level, RSL_c, surface net rotation (x3), CM_incr(x3), CM_incr_ice_static_ocean(x3) \n");
             }
 
         // write out mesh coordinates:
@@ -1097,7 +1097,7 @@ void print_surf_topo_comp(struct All_variables *E,int ii)
                     E->ve_data_cont.tau_in_years*E->advection.timestep,  // length of timestep
                     E->ve_data_cont.PW[0],E->ve_data_cont.PW[1], // cumu. polar motion
                     E->ve_data_cont.PW_incr[0],E->ve_data_cont.PW_incr[1], // polar motion
-                    E->ve_data_cont.eustatic_sea_level, E->ve_data_cont.barystatic_sea_level, // RSL (m)
+                    E->ve_data_cont.eustatic_sea_level, E->ve_data_cont.RSL_c, // RSL (m)
                     E->ve_data_cont.Omega_surface[0], E->ve_data_cont.Omega_surface[1], E->ve_data_cont.Omega_surface[2], // Surface Net rotation rate, deg/yr
 					E->ve_data_cont.CM_incr[0],E->ve_data_cont.CM_incr[1],E->ve_data_cont.CM_incr[2],	// CM_incr
 E->ve_data_cont.CM_incr_ice_static_ocean[0], E->ve_data_cont.CM_incr_ice_static_ocean[1],E->ve_data_cont.CM_incr_ice_static_ocean[2]);															
