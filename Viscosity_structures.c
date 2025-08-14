@@ -1091,8 +1091,8 @@ void visc_from_S(E,EEta,propogate)
 
     if (been_here==0)  {
       for(m=1;m<=E->sphere.caps_per_proc;m++)  
-        for(e=1;e<=nel;e++)/* initialize with unity if no velocities around */
-          E->S2inv[m][e] = 1.0;
+        for(e=1;e<=nel;e++)/* initialize with zero if no velocities around */
+          E->S2inv[m][e] = 0.0;
       been_here = 1;
       }
     else 
@@ -1110,7 +1110,8 @@ void visc_from_S(E,EEta,propogate)
            scale = scale*scale1;
 
            for(jj=1;jj<=vpts;jj++)
-                EEta[m][(e-1)*vpts + jj] = scale*EEta[m][(e-1)*vpts + jj];
+//                EEta[m][(e-1)*vpts + jj] = scale*EEta[m][(e-1)*vpts + jj];
+                EEta[m][(e-1)*vpts + jj] = sqrt(scale*EEta[m][(e-1)*vpts + jj])*sqrt(E->EVold[m][e]);
         }
 
     return;
@@ -1707,7 +1708,14 @@ void stress_2_inv(E,eedot,SQRT,iterate)
                 Is this good? Should we use Eold only for iteration == 1?
                 e.g. if (iteration == 1) visc1 = E->EVold[m][e];
       */
-      visc1=onep_alpha*E->EVolder[m][e]+alpha*E->EVold[m][e];
+      if (iterate <= 2)
+        visc1=E->EVold[m][e];  // for the first nonlinear iteration, only EVold is available?
+      else {
+        // visc1=onep_alpha*E->EVolder[m][e]+alpha*E->EVold[m][e];
+        visc1 = onep_alpha*log10(E->EVolder[m][e]) + alpha*log10(E->EVold[m][e]);
+        visc1 = pow(10.0,visc1);
+      }
+
       a = E->esmu_o[E->mesh.levmax][m][e]/(2.0*visc1)*E->advection.timestep; 
       visc0 = E->esmu_o[E->mesh.levmax][m][e]/(1.0+a);
       maxwell0=(1.0-a)/(1.0+a);

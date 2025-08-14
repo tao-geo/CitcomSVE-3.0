@@ -89,7 +89,7 @@ struct VE_DATA_CONT {
 	double ocean_area; // ocean_area (dim-less) (for SLE)
 	double incr_ocean_area; // incremental
 	double eustatic_sea_level;
-	double barystatic_sea_level;
+	double RSL_c;
 	   // the following are for CM (center of mass) calculations:
 	double CM[3];	   // Center of Mass (for degree-1)
 	double CM_incr[3]; //

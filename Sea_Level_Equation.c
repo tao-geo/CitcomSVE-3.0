@@ -133,7 +133,7 @@ if (E->parallel.me_loc[3] == E->parallel.nprocz-1) {
     // remove average from incremental oceanload:
     remove_average(E,E->slice_ve.dynamic_oceanload,1);
 
-	E->ve_data_cont.barystatic_sea_level = E->ve_data_cont.eustatic_sea_level + c * E->sphere.dradius;
+	E->ve_data_cont.RSL_c = E->ve_data_cont.eustatic_sea_level + c * E->sphere.dradius;
     // print some messages
     if (verbose && E->parallel.me==E->parallel.nprocz-1)
     for (i=0;i<2;i++) {
