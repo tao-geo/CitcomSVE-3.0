@@ -598,6 +598,7 @@ void print_volume_data(struct All_variables *E,int ii)
     int ll,mm;
     int is_a_stage;
     static float *stress[NCS],*visc_h,*stress_h;
+    static float *log10Vi[NCS];
     static float *stress_xx[NCS],*stress_yy[NCS],*stress_zz[NCS],
                  *stress_xy[NCS],*stress_xz[NCS],*stress_zy[NCS];  // nodal stress tensor for output
 
@@ -608,8 +609,10 @@ void print_volume_data(struct All_variables *E,int ii)
     void p_to_nodes(struct All_variables *, double **, float **, int); // should not use ele_to_nodes which is for float only
 
     if ( been_here==0) {
-       for (m=1;m<=E->sphere.caps_per_proc;m++)  
+       for (m=1;m<=E->sphere.caps_per_proc;m++){
          stress[m] = (float *) malloc ((E->lmesh.nno + 1)*sizeof(float));
+         log10Vi[m] = (float *) malloc ((E->lmesh.nno + 1)*sizeof(float));
+       }  
 
        visc_h = (float *) malloc ((E->lmesh.noz + 1)*sizeof(float));
        stress_h = (float *) malloc ((E->lmesh.noz + 1)*sizeof(float));
@@ -649,7 +652,14 @@ void print_volume_data(struct All_variables *E,int ii)
 
  if ( been_here ==0 || is_a_stage || (ii % (E->control.record_every) == 0) || (ii % (E->control.record_vol_every) == 0) || ii==E->advection.max_timesteps ) {
 
-      return_horiz_ave_f(E,E->Vi,visc_h);
+      // log10Vi
+      for (m=1;m<=E->sphere.caps_per_proc;m++)
+        for (i=1; i<=E->lmesh.nno;i++){
+          log10Vi[m][i] = log10f(E->Vi[m][i]);
+        }
+
+      // return_horiz_ave_f(E,E->Vi,visc_h);
+      return_horiz_ave_f(E,log10Vi,visc_h);
       ele_to_nodes(E,E->S2inv,stress,E->mesh.levmax);
       return_horiz_ave_f(E,stress,stress_h);
 
