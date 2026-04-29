@@ -208,6 +208,7 @@ void set_mech_model_from_files(struct All_variables *E)
     void visc_from_file();
     void mech_model_from_file();
     void elastic_model_from_file_3D();
+    void set_mat_group_for_litho(struct All_variables *);
 
     mech_model_from_file(E);
 
@@ -217,10 +218,48 @@ void set_mech_model_from_files(struct All_variables *E)
     if (E->ve_data_cont.ELASTIC_FROM_FILE)
         elastic_model_from_file_3D(E, E->elambda_o[E->mesh.levmax],E->esmu_o[E->mesh.levmax],E->ve_data_cont.elastic_file,E->ve_data_cont.shear_mod);
 
+    // set mat group for lithosphere (as 1)
+    set_mat_group_for_litho(E);
 
     return;
 }
 
+
+/*
+set mat group for lithosphere to be 1.
+This is for cases with lithosphere of varying thickness.
+It is based on elemental viscosity, i.e., E->evi_o[lev][m][el] * E->data.ref_viscosity, which was constructed 
+in both mech_model_from_file and visc_from_file.
+*/
+void set_mat_group_for_litho(struct All_variables *E){
+    int el, m;
+    const int lev = E->mesh.levmax;
+    double VISC_LITHO = 1e25; // the bound of visc for lithosphere "material"
+
+    for(m=1;m<=E->sphere.caps_per_proc;m++)
+      for(el=1; el<=E->lmesh.nel; el++){
+        if (E->evi_o[lev][m][el] * E->data.ref_viscosity > VISC_LITHO){
+          E->mat[m][el] = 1;
+        }
+      }
+    
+    // output matgroup for debug
+    FILE * fp_mat;
+    char filename[200];
+    sprintf(filename, "%s.mat_group.%d", E->control.data_file, E->parallel.me);
+    fp_mat = fopen(filename, "w");
+    if (fp_mat == NULL) {
+      fprintf(stderr, "Error opening file %s\n", filename);
+      return;
+    }
+    for(m=1;m<=E->sphere.caps_per_proc;m++) {
+      for(el=1; el<=E->lmesh.nel; el++){
+        fprintf(fp_mat, "%d\n",E->mat[m][el]);
+      }
+    }
+    fclose(fp_mat);
+    return ;
+}
 
 /* ============================================ */
 /* get_system_viscosity
