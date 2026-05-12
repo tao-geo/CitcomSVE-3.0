@@ -1077,13 +1077,13 @@ void allocate_common_vars(struct All_variables * E)
 
 //add by tao: 
   E->Ekk[j] = (double *) malloc((nel*vpts+1)*sizeof(double)); /* cumulative e_(kk) term */
-//  for (j=1;j<=E->sphere.caps_per_proc;j++)	{
-//	  for(k=1;k<=vpts;k++)
-//		for(i=1;i<=E->lmesh.nel;i++)  {
-//			E->Sxx[j][(i-1)*vpts+k] = E->Syy[j][(i-1)*vpts+k] = E->Szz[j][(i-1)*vpts+k] = E->Sxy[j][(i-1)*vpts+k] = E->Sxz[j][(i-1)*vpts+k] = E->Szy[j][(i-1)*vpts+k] = 0.0;
-//			E->Ekk[j][(i-1)*vpts+k] = 0.0;
-//		}
-//  	}
+  for (j=1;j<=E->sphere.caps_per_proc;j++)	{
+      for(k=1;k<=vpts;k++)
+      for(i=1;i<=E->lmesh.nel;i++)  {
+        E->Sxx[j][(i-1)*vpts+k] = E->Syy[j][(i-1)*vpts+k] = E->Szz[j][(i-1)*vpts+k] = E->Sxy[j][(i-1)*vpts+k] = E->Sxz[j][(i-1)*vpts+k] = E->Szy[j][(i-1)*vpts+k] = 0.0;
+        E->Ekk[j][(i-1)*vpts+k] = 0.0;
+      }
+    }
     E->StrainTensorXX[j] = (float *)malloc((nel+1)*sizeof(float));
     E->StrainTensorYY[j] = (float *)malloc((nel+1)*sizeof(float));
     E->StrainTensorZZ[j] = (float *)malloc((nel+1)*sizeof(float));
