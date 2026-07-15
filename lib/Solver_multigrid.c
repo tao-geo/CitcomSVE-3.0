@@ -376,7 +376,7 @@ void project_viscosity(struct All_variables *E)
 //  	free((void *)rhoU[m]);
 //		free((void *)lambdaU[m]);
 //		free((void *)gravU[m]);
-//		free((void *)gravD[m]);
+		free((void *)gravD[m]);
     }
 
     return;
