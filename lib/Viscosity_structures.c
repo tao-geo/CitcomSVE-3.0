@@ -305,8 +305,8 @@ void get_system_viscosity(E,propogate,evisc,visc)
       if (been_here==0) {
         for(m=1;m<=E->sphere.caps_per_proc;m++)
           for(e=1;e<=E->lmesh.nel;e++) {
-            E->EVolder[m][e] = 1.0;
-            E->EVold[m][e] = 1.0;
+            E->EVolder[m][e] = E->evi_o[E->mesh.levmax][m][e]; // initialize EVold, EVolder to be no-stress viscosity
+            E->EVold[m][e] = E->evi_o[E->mesh.levmax][m][e];
            }
         been_here ++;
         }
