@@ -315,10 +315,15 @@ void get_system_viscosity(E,propogate,evisc,visc)
           for(e=1;e<=E->lmesh.nel;e++) {
             E->EVolder[m][e] = E->EVold[m][e];
             E->EVold[m][e] = 0.125*
-              (visc[m][E->ien[m][e].node[1]] + visc[m][E->ien[m][e].node[2]]
-              +visc[m][E->ien[m][e].node[3]] + visc[m][E->ien[m][e].node[4]]
-              +visc[m][E->ien[m][e].node[5]] + visc[m][E->ien[m][e].node[6]]
-              +visc[m][E->ien[m][e].node[7]] + visc[m][E->ien[m][e].node[8]]);
+              (log10(visc[m][E->ien[m][e].node[1]]) + log10(visc[m][E->ien[m][e].node[2]])
+              +log10(visc[m][E->ien[m][e].node[3]]) + log10(visc[m][E->ien[m][e].node[4]])
+              +log10(visc[m][E->ien[m][e].node[5]]) + log10(visc[m][E->ien[m][e].node[6]])
+              +log10(visc[m][E->ien[m][e].node[7]]) + log10(visc[m][E->ien[m][e].node[8]]));
+            // temp1 = 0;
+            // for(j=1;j<=vpts;j++)
+            //       temp1 += log10(evisc[m][(e-1)*vpts + j]);  // this does not work! evisc is not visc, but mu_hat: mu/(1+alpha) (Geruo A 2012)
+            // temp1 /= vpts;
+            E->EVold[m][e] = pow(10.0,E->EVold[m][e]);
            }
          }
     }

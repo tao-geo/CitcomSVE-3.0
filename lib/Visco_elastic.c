@@ -1361,6 +1361,7 @@ void update_stress_strain(struct All_variables *E, int ii)
     void construct_c3x3matrix_el();
     void ele_to_nodes();
     int i,j,k,e,node,snode,m,nel2;
+    double temp_trace;
     
     double *SXX[NCS],*SYY[NCS],*SXY[NCS],*SXZ[NCS],*SZY[NCS],*SZZ[NCS];
     double VV[4][9],Szz,Sxx,Syy,Sxy,Sxz,Szy;
@@ -1495,11 +1496,17 @@ void update_stress_strain(struct All_variables *E, int ii)
       E->S2zy[m][e] = E->S2zy[m][e]/vpts;
 
       if (!E->viscosity.SDEPV)  {
-      // compute the 2nd invariant of stress
-      E->S2inv[m][e]=E->S2xx[m][e]*E->S2xx[m][e]+E->S2xy[m][e]*E->S2xy[m][e]*2.0
-                    +E->S2yy[m][e]*E->S2yy[m][e]+E->S2zy[m][e]*E->S2zy[m][e]*2.0
-                    +E->S2zz[m][e]*E->S2zz[m][e]+E->S2xz[m][e]*E->S2xz[m][e]*2.0;
-      E->S2inv[m][e] = sqrt(0.5*E->S2inv[m][e]);   
+        // compute the 2nd invariant of stress
+        // E->S2inv[m][e]=E->S2xx[m][e]*E->S2xx[m][e]+E->S2xy[m][e]*E->S2xy[m][e]*2.0
+        //               +E->S2yy[m][e]*E->S2yy[m][e]+E->S2zy[m][e]*E->S2zy[m][e]*2.0
+        //               +E->S2zz[m][e]*E->S2zz[m][e]+E->S2xz[m][e]*E->S2xz[m][e]*2.0;
+        // E->S2inv[m][e] = sqrt(0.5*E->S2inv[m][e]);   
+        temp_trace = (E->S2xx[m][e] + E->S2yy[m][e] + E->S2zz[m][e])/3.0;
+        E->S2inv[m][e]=(E->S2xx[m][e]-temp_trace)*(E->S2xx[m][e]-temp_trace)+E->S2xy[m][e]*E->S2xy[m][e]*2.0
+                      +(E->S2yy[m][e]-temp_trace)*(E->S2yy[m][e]-temp_trace)+E->S2zy[m][e]*E->S2zy[m][e]*2.0
+                      +(E->S2zz[m][e]-temp_trace)*(E->S2zz[m][e]-temp_trace)+E->S2xz[m][e]*E->S2xz[m][e]*2.0;
+        E->S2inv[m][e] = sqrt(0.5*E->S2inv[m][e]);   
+
       }
     }    /* end for el */
 
