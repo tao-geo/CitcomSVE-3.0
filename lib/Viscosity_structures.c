@@ -1750,31 +1750,32 @@ void stress_2_inv(E,eedot,SQRT,iterate)
       sinaa = sin(rtf[1][1]);
       cosaa = cos(rtf[1][1]);
       ct = cosaa/sinaa;
+      Sxyz1 = Sxyz2 = Sxyz3 = Sxyz4 = Sxyz5 = Sxyz6 = 0.0;
 
       for(i=1;i<=ends;i++)   {
         for(k=1;k<=dims;k++)   {
-          Sxyz1 = VV[k][i]*rtf[3][1]*
+          Sxyz1 += VV[k][i]*rtf[3][1]*
                  (gnxx[GNPXINDEX(0,i,1)]*Cc.ppt[BPINDEX(1,k,i,1)]
                  +E->N.ppt[GNPINDEX(i,1)]*Ccx.ppt[BPXINDEX(1,k,1,i,1)]
                  +E->N.ppt[GNPINDEX(i,1)]*Cc.ppt[BPINDEX(3,k,i,1)]);
-          Sxyz2 = VV[k][i]*rtf[3][1]*
+          Sxyz2 += VV[k][i]*rtf[3][1]*
                 (E->N.ppt[GNPINDEX(i,1)]*Cc.ppt[BPINDEX(1,k,i,1)]*ct
                 +E->N.ppt[GNPINDEX(i,1)]*Cc.ppt[BPINDEX(3,k,i,1)]
                 +(gnxx[GNPXINDEX(1,i,1)]*Cc.ppt[BPINDEX(2,k,i,1)]
                  +E->N.ppt[GNPINDEX(i,1)]*Ccx.ppt[BPXINDEX(2,k,2,i,1)])/sinaa);
-          Sxyz3 = VV[k][i]*gnxx[GNPXINDEX(2,i,1)]*Cc.ppt[BPINDEX(3,k,i,1)];
-          Sxyz4 = VV[k][i]*rtf[3][1]*
+          Sxyz3 += VV[k][i]*gnxx[GNPXINDEX(2,i,1)]*Cc.ppt[BPINDEX(3,k,i,1)];
+          Sxyz4 += VV[k][i]*rtf[3][1]*
                 (gnxx[GNPXINDEX(0,i,1)]*Cc.ppt[BPINDEX(2,k,i,1)]
                 +E->N.ppt[GNPINDEX(i,1)]*Ccx.ppt[BPXINDEX(2,k,1,i,1)]
                 -ct*Cc.ppt[BPINDEX(2,k,i,1)]*E->N.ppt[GNPINDEX(i,1)]
                 +(E->N.ppt[GNPINDEX(i,1)]*Ccx.ppt[BPXINDEX(1,k,2,i,1)]
                  +gnxx[GNPXINDEX(1,i,1)]*Cc.ppt[BPINDEX(1,k,i,1)])/sinaa);
-          Sxyz5 = VV[k][i]*rtf[3][1]*
+          Sxyz5 += VV[k][i]*rtf[3][1]*
                 (gnxx[GNPXINDEX(2,i,1)]*Cc.ppt[BPINDEX(1,k,i,1)]/rtf[3][1]
                 +(E->N.ppt[GNPINDEX(i,1)]*Ccx.ppt[BPXINDEX(3,k,1,i,1)]
                  +gnxx[GNPXINDEX(0,i,1)]*Cc.ppt[BPINDEX(3,k,i,1)]
                  -E->N.ppt[GNPINDEX(i,1)]*Cc.ppt[BPINDEX(1,k,i,1)]));
-          Sxyz6 = VV[k][i]*
+          Sxyz6 += VV[k][i]*
                 (gnxx[GNPXINDEX(2,i,1)]*Cc.ppt[BPINDEX(2,k,i,1)]
                 -rtf[3][1]*E->N.ppt[GNPINDEX(i,1)]*Cc.ppt[BPINDEX(2,k,i,1)]
                 +rtf[3][1]/sinaa*(E->N.ppt[GNPINDEX(i,1)]*Ccx.ppt[BPXINDEX(3,k,2,i,1)]+gnxx[GNPXINDEX(1,i,1)]*Cc.ppt[BPINDEX(3,k,i,1)]));
