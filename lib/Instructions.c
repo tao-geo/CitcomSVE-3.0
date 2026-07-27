@@ -1106,6 +1106,12 @@ void allocate_common_vars(struct All_variables * E)
     E->S2inv[j] = (float *) malloc((nel+2)*sizeof(float));
     E->E2inv[j] = (float *) malloc((nel+2)*sizeof(float));
 
+    // initialization to 0
+    for(i=0; i<=nel+1;i++){
+      E->S2xx[j][i] = E->S2yy[j][i] = E->S2zz[j][i] = E->S2xy[j][i] = E->S2xz[j][i] = E->S2zy[j][i] = 0.0;
+      E->EVold[j][i] = E->EVolder[j][i] = E->S2inv[j][i] = E->E2inv[j][i] = 0.0;
+    }
+
   E->mat[j] = (int *) malloc((nel+2)*sizeof(int));
   E->VIP[j] = (float *) malloc((nel+2)*sizeof(float));
 
