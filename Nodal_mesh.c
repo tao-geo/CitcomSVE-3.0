@@ -259,6 +259,39 @@ void ele_to_nodes(E,VE,VN,lev)
    return;
 }
 
+void ele_to_nodes_d(E,VE,VN,lev)
+  struct All_variables *E;
+  double **VE,**VN;
+  int lev;
+  {
+  int m,e,i,j,k,n;
+  const int nsd=E->mesh.nsd;
+  const int vpts=vpoints[nsd];
+  const int ends=enodes[nsd];
+  double temp_visc;
+
+ for (m=1;m<=E->sphere.caps_per_proc;m++)
+   for(i=1;i<=E->lmesh.NNO[lev];i++)
+     VN[m][i] = 0.0;
+
+ for (m=1;m<=E->sphere.caps_per_proc;m++)
+   for(e=1;e<=E->lmesh.NEL[lev];e++)   {
+     for(j=1;j<=ends;j++)                {
+       n = E->IEN[lev][m][e].node[j];
+		//assert(n<=E->lmesh.NNO[lev]); // add by tao: debug E->ID
+       VN[m][n] += E->TWW[lev][m][e].node[j] * VE[m][e];
+       }
+    }
+
+   (E->exchange_node_d)(E,VN,lev);
+
+   for(m=1;m<=E->sphere.caps_per_proc;m++)
+     for(n=1;n<=E->lmesh.NNO[lev];n++)
+        VN[m][n] *= E->MASS[lev][m][n];
+
+   return;
+}
+
 
 void visc_from_gint_to_nodes(E,VE,VN,lev)
   struct All_variables *E;

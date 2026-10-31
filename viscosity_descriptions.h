@@ -128,7 +128,7 @@ struct VISC_OPT {
     float weak_zonemag[CITCOM_MAX_VISC_LAYER];
 
     int guess;
-    char old_file[100];
+    char old_file[300];
 				/* Specification info */
 
 				/* Prespecified viscosity parameters */

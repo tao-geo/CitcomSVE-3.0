@@ -358,6 +358,12 @@ void read_initial_settings(struct All_variables *E)
   input_string("ice_datafile",E->ve_data_cont.ice_file,"initialize",m);
   input_string("ocean_datafile",E->ve_data_cont.ocean_file,"initialize",m);
 
+  input_int("mantle_buoyancy",&(E->control.CONVECTION),"0",m);
+  if (E->control.CONVECTION==1)  {    // if ==2, using single harmonics later
+    input_string("seism_den_datafile",E->control.seism_den_file,"initialize",m);
+    input_string("seism_temp_datafile",E->control.seism_temp_file,"initialize",m);
+  }
+
   E->ve_data_cont.read_ice_format=0;
   input_int("ice_sph_or_grid",&(E->ve_data_cont.read_ice_format),"0",m);
 
@@ -1021,6 +1027,7 @@ void allocate_common_vars(struct All_variables * E)
   E->slice_ve.all_load_potential[j]      = (double *)malloc((nno+2)*sizeof(double));
   E->slice_ve.total_potential[j]      = (double *)malloc((nno+2)*sizeof(double));
   E->slice_ve.init_total_potential[j] = (double *)malloc((nno+2)*sizeof(double));
+  E->slice_ve.potential_int_loads[j] = (double *)malloc((nno+2)*sizeof(double));
 
   E->potential[0][j]      = (double *)malloc((nsf+2)*sizeof(double));
   E->potential[1][j]      = (double *)malloc((nsf+2)*sizeof(double));
@@ -1033,6 +1040,16 @@ void allocate_common_vars(struct All_variables * E)
   E->slice_ve.elast_thick[j]=(double *)malloc((nsf+2)*sizeof(double));
   E->slice_ve.plate_margins[j]=(double *)malloc((nsf+2)*sizeof(double));
 
+  for (i=1;i<=nsf;i++) 		{
+     E->potential[0][j][i] = 0.0; 
+     E->potential[1][j][i] = 0.0; 
+     E->init_potential[0][j][i] = 0.0; 
+     E->init_potential[1][j][i] = 0.0; 
+     E->incr_potential[0][j][i] = 0.0; 
+     E->incr_potential[1][j][i] = 0.0; 
+     E->incr_potential[2][j][i] = 0.0; 
+     E->incr_potential[3][j][i] = 0.0; 
+     }
   for (i=1;i<=nno;i++) 		{
      E->slice_ve.all_load[j][i] = 0.0;
      E->slice_ve.total_load[j][i] = 0.0;
@@ -1077,11 +1094,11 @@ void allocate_common_vars(struct All_variables * E)
 
 //add by tao: 
   E->Ekk[j] = (double *) malloc((nel*vpts+1)*sizeof(double)); /* cumulative e_(kk) term */
-      for(k=1;k<=vpts;k++)
-      for(i=1;i<=E->lmesh.nel;i++)  {
-        E->Sxx[j][(i-1)*vpts+k] = E->Syy[j][(i-1)*vpts+k] = E->Szz[j][(i-1)*vpts+k] = E->Sxy[j][(i-1)*vpts+k] = E->Sxz[j][(i-1)*vpts+k] = E->Szy[j][(i-1)*vpts+k] = 0.0;
-        E->Ekk[j][(i-1)*vpts+k] = 0.0;
-      }
+  for(k=1;k<=vpts;k++)
+		for(i=1;i<=E->lmesh.nel;i++)  {
+			E->Sxx[j][(i-1)*vpts+k] = E->Syy[j][(i-1)*vpts+k] = E->Szz[j][(i-1)*vpts+k] = E->Sxy[j][(i-1)*vpts+k] = E->Sxz[j][(i-1)*vpts+k] = E->Szy[j][(i-1)*vpts+k] = 0.0;
+			E->Ekk[j][(i-1)*vpts+k] = 0.0;
+		}
     E->StrainTensorXX[j] = (float *)malloc((nel+1)*sizeof(float));
     E->StrainTensorYY[j] = (float *)malloc((nel+1)*sizeof(float));
     E->StrainTensorZZ[j] = (float *)malloc((nel+1)*sizeof(float));
@@ -1106,12 +1123,6 @@ void allocate_common_vars(struct All_variables * E)
     E->S2inv[j] = (float *) malloc((nel+2)*sizeof(float));
     E->E2inv[j] = (float *) malloc((nel+2)*sizeof(float));
 
-    // initialization to 0
-    for(i=0; i<=nel;i++){
-      E->S2xx[j][i] = E->S2yy[j][i] = E->S2zz[j][i] = E->S2xy[j][i] = E->S2xz[j][i] = E->S2zy[j][i] = 0.0;
-      E->EVold[j][i] = E->EVolder[j][i] = E->S2inv[j][i] = E->E2inv[j][i] = 0.0;
-    }
-
   E->mat[j] = (int *) malloc((nel+2)*sizeof(int));
   E->VIP[j] = (float *) malloc((nel+2)*sizeof(float));
 
@@ -1135,7 +1146,9 @@ void allocate_common_vars(struct All_variables * E)
   }         /* end for cap j  */
 
   /* density field */
-  E->rho      = (double *) malloc((nno+1)*sizeof(double));
+//  E->rho      = (double *) malloc((nno+1)*sizeof(double));
+
+  E->sphere.rr      = (double *) malloc((E->mesh.noz+2)*sizeof(double));
 
   /* horizontal average */
   E->Have.T         = (float *)malloc((E->lmesh.noz+2)*sizeof(float));
@@ -1144,6 +1157,7 @@ void allocate_common_vars(struct All_variables * E)
 
  for(i=E->mesh.levmin;i<=E->mesh.levmax;i++) {
   E->sphere.R[i] = (double *)  malloc((E->lmesh.NOZ[i]+1)*sizeof(double));
+  E->rho_jump1D[i]    = (float *) malloc((E->mesh.NOZ[i]+1)*sizeof(float));
   for (j=1;j<=E->sphere.caps_per_proc;j++)  {
     nno  = E->lmesh.NNO[i];
     npno = E->lmesh.NPNO[i];

@@ -38,17 +38,17 @@ struct VE_DATA_CONT {
 	double damping;
 	
 	int  save_binary;	   /* added by Archie, March 2005 */
-	char ice_file[100];
-	char ocean_file[100];  // filename for ocean function, for SLE
-	char timestage_file[100];  // filename for time stages
-	char slabgeoid_file[100];
-	char visc_file[100];
-	char te_file[100];
-	char platemargins_file[100];
+	char ice_file[300];
+	char ocean_file[300];  // filename for ocean function, for SLE
+	char timestage_file[300];  // filename for time stages
+	char slabgeoid_file[300];
+	char visc_file[300];
+	char te_file[300];
+	char platemargins_file[300];
 	int compressible;
 	int OneDmodel_read;  // was 1Dmodel_read, modify by tao. should not start with num,
 	int OneDmodel_read_g; // whether to read g from model, or compute from density.
-	char OneDmodel_file[100];
+	char OneDmodel_file[300];
 	
 	int stages; // number of stages in ice loading, from inputfile 'stages'
 	int stage;	// current stage
@@ -101,7 +101,7 @@ struct VE_DATA_CONT {
 	double Omega_surface[3]; // net rotation of surface (relative to whole earth); see remove_rigid_rot
 
 	int ELASTIC_FROM_FILE; // option for read 3D mu and lambda
-	char elastic_file[100];
+	char elastic_file[300];
 	  } ve_data_cont;
 	
 struct SLICE_VE {
@@ -126,6 +126,7 @@ struct SLICE_VE {
 	double *all_load_potential[NCS];
 	double *total_potential[NCS];
 	double *init_total_potential[NCS];
+	double *potential_int_loads[NCS];
 	
 	double *iceload[6][NCS];
 	double *ice_height_prev[NCS];

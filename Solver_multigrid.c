@@ -1,3 +1,19 @@
+/******************************************************************************
+ *
+ * CitcomSVE-3.0 is a finite element package that solves for dynamic
+ * deformation of planetary mantle and crust in a spherical shell under either
+ * surface or tidal loads. The mantle and crust may assume a fully compressible
+ * or incompressible medium with 3-D viscoelastic structures. The package works
+ * with parallel computers with the number of cores or CPUs greater than 12
+ * (test runs with >6,000 cores). This version was built on CitcomS-3.1.1,
+ * which is a code for planetary mantle convection of a purely viscous flow.
+ * This heading was added to the files in CitcomSVE-3.0 that has been modified
+ * extensively from or new to CitcomS. Following CitcomS, CitcomSVE has been
+ * publicly available as an open source package at github since 2022.
+ *
+ *               Shijie Zhong, University of Colorado
+ ******************************************************************************/
+
 /*
  *~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
  *
@@ -255,6 +271,8 @@ void project_viscosity(struct All_variables *E)
 
 {
     int lv,i,j,k,m,sl_minus;
+    int i1,i2,jj;
+    int el,nels_minus;
     void inject_scalar();
     void project_scalar();
     void project_scalar_e();
@@ -263,12 +281,15 @@ void project_viscosity(struct All_variables *E)
     void visc_from_nodes_to_gint();
     void visc_from_gint_to_ele();
     void visc_from_ele_to_gint();
+    void compute_g();
     void ele_to_nodes();
 
     const int nsd=E->mesh.nsd;
     const int vpts=vpoints[nsd];
 
     float *viscU[NCS],*viscD[NCS];
+    float *rhoU[NCS],*rhoD[NCS],*lambdaU[NCS],*lambdaD[NCS],*gravU[NCS],*gravD[NCS];
+    float *rho_temp,*rho_temp1;
 
   lv = E->mesh.levmax;
 
@@ -276,6 +297,7 @@ void project_viscosity(struct All_variables *E)
     viscU[m]=(float *)malloc((1+E->lmesh.NNO[lv])*sizeof(float));
     viscD[m]=(float *)malloc((1+vpts*E->lmesh.NEL[lv-1])*sizeof(float));
     }
+
 
   for(lv=E->mesh.levmax;lv>E->mesh.levmin;lv--)     {
 
@@ -296,10 +318,6 @@ void project_viscosity(struct All_variables *E)
       visc_from_ele_to_gint(E,viscD,E->EVI[sl_minus],sl_minus);
       }
     else if (E->viscosity.smooth_cycles==0)  {
-/*      visc_from_gint_to_nodes(E,E->EVI[lv],viscU,lv);
-      inject_scalar(E,lv,viscU,viscD);
-      visc_from_nodes_to_gint(E,viscD,E->EVI[sl_minus],sl_minus); */
-
       inject_scalar(E,lv,E->VI[lv],E->VI[sl_minus]);
       visc_from_nodes_to_gint(E,E->VI[sl_minus],E->EVI[sl_minus],sl_minus);
       }
@@ -316,19 +334,18 @@ void project_viscosity(struct All_variables *E)
 	//add by tao: should project erho, elambda, egrav to other layers. see Geruo.
 		// or construct them at the time when the levmax of them are constructed,
 		// since they don't behave like viscosity.
-  float *rhoU[NCS],*rhoD[NCS],*lambdaU[NCS],*lambdaD[NCS],*gravU[NCS],*gravD[NCS];
 
   lv = E->mesh.levmax;
 
   for(m=1;m<=E->sphere.caps_per_proc;m++)  {
 /* change start - project other paramters, only those appeared at the left hand side of the equation need to be projected */
   //  need vpts here.
-	    rhoD[m]=(float *)malloc((1+vpts*E->lmesh.NEL[lv-1])*sizeof(float));
-		lambdaD[m]=(float *)malloc((1+vpts*E->lmesh.NEL[lv-1])*sizeof(float));
+        rhoD[m]=(float *)malloc((1+vpts*E->lmesh.NEL[lv-1])*sizeof(float));
+	lambdaD[m]=(float *)malloc((1+vpts*E->lmesh.NEL[lv-1])*sizeof(float));
+	gravD[m] = (float *)malloc((1+vpts*E->lmesh.NEL[lv-1])*sizeof(float));
 //	    lambdaU[m]=(float *)malloc((1+E->lmesh.NNO[lv])*sizeof(float));
 //		rhoU[m]=(float *)malloc((1+E->lmesh.NNO[lv])*sizeof(float));
 //		gravU[m] = (float *)malloc((1+E->lmesh.NNO[lv])*sizeof(float));
-		gravD[m] = (float *)malloc((1+vpts*E->lmesh.NEL[lv-1])*sizeof(float));
     }
 
   assert(E->viscosity.smooth_cycles==3);
@@ -336,8 +353,7 @@ void project_viscosity(struct All_variables *E)
   for(lv=E->mesh.levmax;lv>E->mesh.levmin;lv--)     {
  
 	sl_minus = lv -1;
-	int el;
-  	int nels_minus=E->lmesh.NEL[sl_minus];
+  	nels_minus=E->lmesh.NEL[sl_minus];
 
   	project_scalar_e(E, lv, E->erho[lv], rhoD);
       for(m=1;m<=E->sphere.caps_per_proc;m++)
@@ -351,7 +367,6 @@ void project_viscosity(struct All_variables *E)
             E->elambda[sl_minus][m][el] = lambdaD[m][el];
             }
 
-	void compute_g(struct All_variables *, int);
 
 	if(E->ve_data_cont.OneDmodel_read_g == 1){
 		project_scalar_e(E, lv, E->egrav[lv], gravD);
@@ -365,18 +380,50 @@ void project_viscosity(struct All_variables *E)
 		compute_g(E,sl_minus);
   	}
   	
-	}
+    }
+
+  rho_temp = (float *)malloc((E->mesh.elz+2)*sizeof(float));
+  rho_temp1 = (float *)malloc((E->mesh.elz+2)*sizeof(float));
 
 
+// determine density jumps for each element level needed for compressible cases
+  for(lv=E->mesh.levmax;lv>=E->mesh.levmin;lv--)     {
+    for (i1=1;i1<=E->mesh.elz+1;i1++) {
+        rho_temp[i1] = rho_temp1[i1] = 0.0;
+        }
+    for(m=1;m<=E->sphere.caps_per_proc;m++)
+    for (jj=1;jj<=E->lmesh.ELZ[lv];jj++)  {
+	    rho_temp[E->lmesh.EZS[lv] + jj] = E->erho[lv][m][jj];
+       }
+   i2 = E->mesh.ELZ[lv]+1;
+   MPI_Allreduce(rho_temp, rho_temp1, i2, MPI_FLOAT, MPI_SUM, E->parallel.vertical_comm);
+   E->rho_jump1D[lv][1] = E->data.density_below/E->data.density - rho_temp1[1];
+   for (i1=1;i1<E->mesh.ELZ[lv];i1++)  {
+      E->rho_jump1D[lv][i1+1] = rho_temp1[i1] - rho_temp1[i1+1];
+   }
+   E->rho_jump1D[lv][E->mesh.ELZ[lv]+1] = rho_temp1[E->mesh.ELZ[lv]] - E->data.density_above/E->data.density;
+
+//   fprintf(E->fp_out,"density jump, and density at level %d\n",lv);
+//   for (i1=1;i1<=E->mesh.ELZ[lv];i1++)  {
+//	   fprintf(E->fp_out,"%d %g %g\n",i1,E->rho_jump1D[lv][i1]*E->data.density,E->erho[lv][1][i1]*E->data.density);
+//   }
+//   i1 = E->mesh.ELZ[lv]+1;
+//   fprintf(E->fp_out,"%d %g\n",i1,E->rho_jump1D[lv][i1]*E->data.density);
+
+    }   // end for lv
+  fflush(E->fp_out);
+
+  free((void *)rho_temp);
+  free((void *)rho_temp1);
   for(m=1;m<=E->sphere.caps_per_proc;m++)  {
     free((void *)viscU[m]);
     free((void *)viscD[m]);
 	free((void *)rhoD[m]);
 	free((void *)lambdaD[m]);
+	free((void *)gravD[m]);
 //  	free((void *)rhoU[m]);
 //		free((void *)lambdaU[m]);
 //		free((void *)gravU[m]);
-		free((void *)gravD[m]);
     }
 
     return;

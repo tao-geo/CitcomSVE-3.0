@@ -136,6 +136,11 @@ void full_node_locations(E)
     break;
   }
 
+  E->sphere.rr[E->mesh.noz+1] = 0.0;
+
+  for (k=1;k<=E->mesh.noz;k++)
+	  E->sphere.rr[k] = rr[k];
+
   for (i=1;i<=E->lmesh.noz;i++)  {
     k = E->lmesh.nzs+i-1;
     RR[i] = rr[k];

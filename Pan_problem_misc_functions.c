@@ -145,6 +145,19 @@ void apply_side_sbc(struct All_variables *E)
   }
 }
 
+void get_buoyancy_seismo(struct All_variables *E, double **buoy)
+{
+    int i,j,m,n,nz,nxny;
+    int lev = E->mesh.levmax;
+    double temp,temp2,rfac,cost2;
+    void remove_horiz_ave2(struct All_variables*, double**);
+
+    // buoy here is the dimensionless delta_rho from Initial_temperature.c
+    // it is converted to buoyancy directly in get_elt_f() by applying 
+    // stress_scaling = rho0*g0*Rs/mu and dimensionless g.
+    //
+    return;
+    }
 
 void get_buoyancy(struct All_variables *E, double **buoy)
 {

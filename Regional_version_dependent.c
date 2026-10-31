@@ -118,7 +118,8 @@ void regional_node_locations(E)
     break;
   }
 
-
+  for (k=1;k<=E->mesh.noz;k++)  
+          E->sphere.rr[k] = rr[k];
 
   for (i=1;i<=E->lmesh.noz;i++)  {
       k = E->lmesh.nzs+i-1;

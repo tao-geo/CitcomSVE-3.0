@@ -33,6 +33,7 @@
 #include "global_defs.h"
 #include "lith_age.h"
 #include "parsing.h"
+#include "element_definitions.h"
 
 void parallel_process_termination();
 void temperatures_conform_bcs(struct All_variables *);
@@ -58,19 +59,15 @@ void tic_input(struct All_variables *E)
   int m = E->parallel.me;
   int noz = E->lmesh.noz;
   int n;
-#ifdef USE_GGRD
   int tmp;
-#endif
 
-  input_int("tic_method", &(E->convection.tic_method), "0,0,2", m);
+  input_int("tic_method", &(E->convection.tic_method), "0", m);
 
-#ifdef USE_GGRD			/* for backward capability */
   input_int("ggrd_tinit", &tmp, "0", m);
   if(tmp){
     E->convection.tic_method = 4; /*  */
-    E->control.ggrd.use_temp = 1;
+//    E->control.ggrd.use_temp = 1;
   }
-#endif  
   /* When tic_method is 0 (default), the temperature is a linear profile +
      perturbation at some layers.
 
@@ -101,7 +98,7 @@ void tic_input(struct All_variables *E)
        node number is equal to load_depth. The horizontal pattern of
        the anomaly is given by spherical harmonic ll & mm. */
 
-    input_int("num_perturbations", &n, "0,0,PERTURB_MAX_LAYERS", m);
+    input_int("num_perturbations", &n, "1", m);
 
     if (n > 0) {
       E->convection.number_of_perturbations = n;
@@ -134,7 +131,6 @@ void tic_input(struct All_variables *E)
     input_float("half_space_age", &(E->convection.half_space_age), "40.0,1e-3,nomax", m);
     input_float("mantle_temp",&(E->control.mantle_temp),"1.0",m);
 
-    
     switch(E->convection.tic_method){
     case 2:			/* blob */
       if( ! input_float_vector("blob_center", 3, E->convection.blob_center, m)) {
@@ -191,6 +187,8 @@ void tic_input(struct All_variables *E)
 void convection_initial_temperature(struct All_variables *E)
 {
   void report();
+  void read_temp_ddensity();
+  void construct_temp_ddens_from_input();
 
   report(E,"Initialize temperature field");
 
@@ -207,6 +205,19 @@ void convection_initial_temperature(struct All_variables *E)
       lith_age_construct_tic(E);
   else
       construct_tic_from_input(E);
+
+  if (E->control.CONVECTION)  {
+    if (E->control.CONVECTION==1)  {
+     // get dimensionless delta_rho in buoyancy[] and temperature
+       read_temp_ddensity(E);
+    }
+    else if (E->control.CONVECTION==2)  {
+       // using a delta function and single harmonic delta_rho at a given depth
+      construct_temp_ddens_from_input(E);
+       // did not reset the default temperature from construct_tic_from_input
+    }
+
+  }
 
   /* Note: it is the callee's responsibility to conform tbc. */
   /* like a call to temperatures_conform_bcs(E); */
@@ -728,3 +739,219 @@ static void construct_tic_from_input(struct All_variables *E)
 }
 
 
+
+void read_temp_ddensity(struct All_variables *E)
+{
+  void read_fields_regular_from_file_to_SVE();
+  void return_horiz_ave_f();
+  void ele_to_nodes();
+
+  int i,k,node, m;
+  char output_file[255], input_s[1000];
+  static float *hor_ave;
+  static int been_here=0;
+  FILE *fp;
+  
+  if (been_here==0)  {
+      hor_ave = (float *)malloc((E->lmesh.noz+1)*sizeof(float));
+      been_here ++;
+  }
+
+  // NP is a temporary array in float
+  // get the dimensionless density profiles
+  ele_to_nodes(E,E->erho[E->mesh.levmax],E->NP, E->mesh.levmax);
+  return_horiz_ave_f(E,E->NP,hor_ave);
+
+   if (E->parallel.me==0)  {
+     fprintf(E->fp_out,"average fields vs radius after the interpolation to FE grid\n"); 
+     for(k=1;k<=E->lmesh.noz;k++)   {
+       fprintf(E->fp_out,"%d %.5e %.5e\n",k,E->sx[1][3][k],hor_ave[k]); 
+       }
+     }
+
+  if (E->parallel.me==0)
+    fprintf(E->fp,"Reading %s for seismo d_density and %s for temperature\n",E->control.seism_den_file, E->control.seism_temp_file);
+
+  read_fields_regular_from_file_to_SVE(E,E->NP,E->control.seism_den_file); // density anomalies drho/rho to NP
+									   //
+  for(m=1;m<=E->sphere.caps_per_proc;m++) {
+    for(i=1;i<=E->lmesh.nno;i++)  {
+      k = ((i-1)%E->lmesh.noz) + 1;
+      E->buoyancy[m][i] = E->NP[m][i]*hor_ave[k];
+         // dimensionless d_density 
+    }
+  }
+					     //
+  read_fields_regular_from_file_to_SVE(E,E->NP,E->control.seism_temp_file); // temperature anomalies
+
+  for(m=1;m<=E->sphere.caps_per_proc;m++) {
+    for(i=1;i<=E->lmesh.nno;i++)  {
+      E->T[m][i] = E->NP[m][i];
+    }
+  }
+
+  return;
+}
+
+void construct_temp_ddens_from_input(E)
+  struct All_variables *E;
+{
+ int i,k,m,ll,mm,pp;
+ double con,t1,f1,dr;
+
+  pp = E->convection.number_of_perturbations-1;
+  ll = E->convection.perturb_ll[pp];
+  mm = E->convection.perturb_mm[pp];
+  con = E->convection.perturb_mag[pp]/((E->sphere.ro-E->sphere.ri)/(E->mesh.noz-1));
+
+  if (E->parallel.me==0) fprintf(stderr,"ll, mm_in_buoyancy %d %d %d %d %g\n",ll,mm,pp,E->convection.load_depth[pp],con);
+
+ //     fprintf(E->fp_out,"output_buoy %d\n",E->lmesh.nno);
+  for(m=1;m<=E->sphere.caps_per_proc;m++)
+    for(i=1;i<=E->lmesh.nno;i++)  {
+      E->buoyancy[m][i] = 0.0;
+      k = ((i-1)%E->lmesh.noz) + E->lmesh.nzs;
+      if (k==E->convection.load_depth[pp])   {
+         t1 = E->SX[E->mesh.levmax][m][1][i];
+         f1 = E->SX[E->mesh.levmax][m][2][i];
+         E->buoyancy[m][i] = con*modified_plgndr_a(ll,mm,t1)*cos(mm*f1);
+      }
+//      fprintf(E->fp_out,"%d %g %g\n",i,E->sx[m][3][i],E->buoyancy[m][i]);
+         // dimensionless d_density 
+  }
+
+  return;
+}
+
+void read_fields_regular_from_file_to_SVE(E,fields,filename)
+     struct All_variables *E;
+     float **fields;
+     char *filename;
+{
+
+
+    int i,d,ii,m,jj,j,k,nn,node;
+    const int vpts = vpoints[E->mesh.nsd];
+    char output_file[255],input_s[200];
+    float temp1,temp2,temp3;
+    void ele_to_nodes();
+    void return_horiz_ave_f();
+    void parallel_process_termination();
+    void interpolate_to_FE_grid();
+    FILE *fp1;
+
+    static int been_here=0;
+    int ee,el,ndepth,nfi,nth,nnfi,nnth,i1,i2,iskip,idepth;
+    static double *radius_visc,*visc_reg,*visc_FE[2];
+    static float *ave_visc;
+    double rr;
+
+    fp1 = fopen(filename,"r");
+    if (fp1 == NULL) {
+      fprintf(E->fp,"Cannot open %s\n",filename);
+      parallel_process_termination();
+      }
+
+    fgets(input_s,200,fp1);   // read description
+    fgets(input_s,200,fp1);
+    sscanf(input_s,"%d %d %d",&ndepth,&nfi,&nth);
+    fgets(input_s,200,fp1);   // read description
+    nn = nfi*nth;
+    nnth = nth +2;    // add 1 row and 1 column to each side 
+    nnfi = nfi +2;
+
+    if (been_here==0)  {
+      visc_reg = (double *)malloc(((nfi+2)*(nth+2)+1)*sizeof(double));
+      radius_visc = (double *)malloc((ndepth+1)*sizeof(double));
+      ave_visc = (float *)malloc((E->lmesh.noz+1)*sizeof(float));
+      for (m=1;m<=E->sphere.caps_per_proc;m++)
+         visc_FE[m] = (double *)malloc((E->lmesh.nsf+1)*sizeof(double));
+      been_here = 1;
+      }
+
+    for (i=1;i<=ndepth;i++)  {
+      fgets(input_s,200,fp1);
+      sscanf(input_s,"%g",&temp1);
+      radius_visc[i] = E->sphere.ro-temp1*1000.0/E->sphere.dradius;
+      }
+
+    fclose(fp1);
+
+
+  for(m=1;m<=E->sphere.caps_per_proc;m++)
+    for (jj=1;jj<=E->lmesh.noz;jj++)  {
+      rr = E->sx[m][3][jj];
+
+      if (rr>=radius_visc[ndepth]) {
+       //  continue;
+        i1 = ndepth;
+        i2 = ndepth;
+        }
+      else if (rr<=radius_visc[1])  {
+        //continue;
+         i1=1;
+         i2=1;
+        }
+      else {
+        for (i=1;i<ndepth;i++)  {
+          if (rr>=radius_visc[i] && rr<=radius_visc[i+1]) {
+            i1=i;
+            i2=i+1;
+            break;
+            } 
+          }
+        }
+
+      fp1 = fopen(filename,"r");
+      iskip = 3+ndepth+1+nfi+1+nth + (i1-1)*(nn+1); 
+      for (i=1;i<=iskip;i++)  
+        fgets(input_s,200,fp1);
+
+      fgets(input_s,200,fp1);
+      for (i=2;i<=nnth-1;i++)  
+      for (j=2;j<=nnfi-1;j++)  {
+        k = i + (j-1)*nnth;
+        fgets(input_s,200,fp1);
+        sscanf(input_s,"%g",&temp1);
+        visc_reg[k] = temp1;      
+        }
+
+      if (i1!=i2) {     // read one more layer and interpolate radially
+        temp1 = (radius_visc[i2] - rr)/(radius_visc[i2] - radius_visc[i1]); 
+        temp2 = (rr - radius_visc[i1])/(radius_visc[i2] - radius_visc[i1]); 
+        fgets(input_s,200,fp1);
+        for (i=2;i<=nnth-1;i++)  
+        for (j=2;j<=nnfi-1;j++)  {
+          k = i + (j-1)*nnth;
+          fgets(input_s,200,fp1);
+          sscanf(input_s,"%g",&temp3);
+          // visc_reg[k] = visc_reg[k]*temp1 + log10f(temp3)*temp2;  // also use log10f here if used above
+//          visc_reg[k] = visc_reg[k]*temp1 + 1/temp3*temp2;  // use Harmonic Mean
+          visc_reg[k] = visc_reg[k]*temp1 + temp3*temp2;  // use Harmonic Mean
+          }
+        }
+      fclose(fp1);
+
+      interpolate_to_FE_grid(E,visc_FE[m],visc_reg,nnth,nnfi);
+
+      for (i=1;i<=E->lmesh.noy;i++)  
+      for (j=1;j<=E->lmesh.nox;j++)  {
+         ee = j + (i-1)*E->lmesh.nox;      
+	 node = jj + (j-1)*E->lmesh.noz + (i-1)*E->lmesh.noz*E->lmesh.nox;
+	 fields[m][node] = visc_FE[m][ee];
+         }
+      }   // end for jj of lmesh.elz
+
+  return_horiz_ave_f(E,fields,ave_visc);
+
+   if (E->parallel.me==0)  {
+     fprintf(E->fp_out,"average fields vs radius after the interpolation to FE grid\n"); 
+     for(k=1;k<=E->lmesh.noz;k++)   {
+       fprintf(E->fp_out,"%d %.5e %.5e\n",k,E->sx[1][3][k],ave_visc[k]); 
+       }
+     }
+
+//  parallel_process_termination();
+
+  return;
+  }

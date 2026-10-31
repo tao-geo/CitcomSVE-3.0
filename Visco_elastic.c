@@ -39,7 +39,7 @@ void process_new_velocity(struct All_variables *E,int ii)
   void print_surf_topo_comp();
     void print_volume_data();
     void deform_grid();
-    void calculate_potential();
+    void calculate_potential_incomp();
   void calculate_potential_comp();
     void calculate_Love_numbers();
 
@@ -83,7 +83,7 @@ void process_new_velocity(struct All_variables *E,int ii)
       }
     else	/*comment by tao: incompressible*/
       {
-      calculate_potential( E, E->slice_ve.surf[2], E->slice_ve.botm[2],
+      calculate_potential_incomp( E, E->slice_ve.surf[2], E->slice_ve.botm[2],
                        E->incr_potential[0], E->incr_potential[1], 1 );
       }
       
@@ -238,32 +238,16 @@ void deform_grid(struct All_variables *E)
          
 
     if(E->ve_data_cont.compressible){
-
-      // comment by tao: below the code copy from get_boundary_forces without load_to_CM
-
       stress_scaling =  E->data.density*E->data.grav_acc*E->sphere.dradius/E->ve_data_cont.shear_mod;
       density_surf = 1.0;
       density_cmb = (E->data.density_below-E->data.density)/E->data.density;
   
             /* comment by tao: below is the compressible version.*/
             for (m=1;m<=E->sphere.caps_per_proc;m++)
-              for (e=1;e<=E->lmesh.nel;e++) {
-                /* find delta-rho across the top surface of each element*/
-                if ( e%E->lmesh.elz==0 /*&& E->parallel.me_loc[3]==E->parallel.nprocz-1*/ ) { /* at the surface */
-                   if(E->parallel.me_loc[3]==E->parallel.nprocz-1)
-                      density_jump = E->erho[lev][m][e];  //comment by tao: geruo define erho on vpt, here is on element
-                  else
-                     density_jump = E->erho[lev][m][e] - 1.0;
+              for (node=1;node<=E->lmesh.nno;node++) {
+		  j = (node-1)%E->lmesh.noz + E->lmesh.nzs; 
+                  E->slice_ve.all_stress[m][node] = E->rho_jump1D[E->mesh.levmax][j]*E->U[m][E->id[m][node].doff[3]]; 
                 }
-                else {
-                    density_jump =  E->erho[lev][m][e] - E->erho[lev][m][e+1];
-                }
-                /* compute all_stress at top nodes */
-                for (j=1;j<=onedp;j++){
-                  node = E->ien[m][e].node[j+onedp];
-                  E->slice_ve.all_stress[m][node] = density_jump*E->U[m][E->id[m][node].doff[3]]; /* i do not multiply this by grav acc because I only need mass */
-                }
-              } // end m and e loop
 
               /* add dynamic_oceanload to the Earth's surface */
            if (E->ve_data_cont.SLE){
@@ -271,25 +255,11 @@ void deform_grid(struct All_variables *E)
                 for (m=1;m<=E->sphere.caps_per_proc;m++)
                 for (j=1;j<=E->lmesh.nsf;j++)    {
                   node = j*E->lmesh.noz;
-                  E->slice_ve.all_stress[m][node] += E->slice_ve.dynamic_oceanload[m][j]/stress_scaling; /* note that the rho used in dynamic_oceanload is actually rho_ice */
-                                              /* note that dynamic_oceanload is non-dim stress, so convert it to non-dim mass - rho_water * u */
-                }
-              }
-              }
-
-               // CMB
-              for (m=1;m<=E->sphere.caps_per_proc;m++) 
-                for (j=1;j<=E->lmesh.SNEL[lev];j++)    {
-                  e = (j-1)*E->lmesh.elz+1;
-                  if(E->parallel.me_loc[3]==0)
-                      density_jump = E->data.density_below/E->data.density -E->erho[lev][m][e];
-                  else
-                      density_jump = 1.0 -E->erho[lev][m][e];
-                  for (n=1;n<=onedp;n++) {
-                    node = E->ien[m][e].node[n];
-                    E->slice_ve.all_stress[m][node] = density_jump*E->U[m][E->id[m][node].doff[3]];
+                  E->slice_ve.all_stress[m][node] += E->slice_ve.dynamic_oceanload[m][j]/stress_scaling; // note that the rho used in dynamic_oceanload is actually rho_ice
+                       // note that dynamic_oceanload is non-dim stress, so convert it to non-dim mass - rho_water * u
                   }
                 }
+              }
         }   // end for compressible
     else {     // for incompressible
           // surface:
@@ -598,7 +568,6 @@ void print_volume_data(struct All_variables *E,int ii)
     int ll,mm;
     int is_a_stage;
     static float *stress[NCS],*visc_h,*stress_h;
-    static float *log10Vi[NCS];
     static float *stress_xx[NCS],*stress_yy[NCS],*stress_zz[NCS],
                  *stress_xy[NCS],*stress_xz[NCS],*stress_zy[NCS];  // nodal stress tensor for output
 
@@ -609,10 +578,8 @@ void print_volume_data(struct All_variables *E,int ii)
     void p_to_nodes(struct All_variables *, double **, float **, int); // should not use ele_to_nodes which is for float only
 
     if ( been_here==0) {
-       for (m=1;m<=E->sphere.caps_per_proc;m++){
+       for (m=1;m<=E->sphere.caps_per_proc;m++)  
          stress[m] = (float *) malloc ((E->lmesh.nno + 1)*sizeof(float));
-         log10Vi[m] = (float *) malloc ((E->lmesh.nno + 1)*sizeof(float));
-       }  
 
        visc_h = (float *) malloc ((E->lmesh.noz + 1)*sizeof(float));
        stress_h = (float *) malloc ((E->lmesh.noz + 1)*sizeof(float));
@@ -652,14 +619,7 @@ void print_volume_data(struct All_variables *E,int ii)
 
  if ( been_here ==0 || is_a_stage || (ii % (E->control.record_every) == 0) || (ii % (E->control.record_vol_every) == 0) || ii==E->advection.max_timesteps ) {
 
-      // log10Vi
-      for (m=1;m<=E->sphere.caps_per_proc;m++)
-        for (i=1; i<=E->lmesh.nno;i++){
-          log10Vi[m][i] = log10f(E->Vi[m][i]);
-        }
-
-      // return_horiz_ave_f(E,E->Vi,visc_h);
-      return_horiz_ave_f(E,log10Vi,visc_h);
+      return_horiz_ave_f(E,E->Vi,visc_h);
       ele_to_nodes(E,E->S2inv,stress,E->mesh.levmax);
       return_horiz_ave_f(E,stress,stress_h);
 
@@ -1361,7 +1321,6 @@ void update_stress_strain(struct All_variables *E, int ii)
     void construct_c3x3matrix_el();
     void ele_to_nodes();
     int i,j,k,e,node,snode,m,nel2;
-    double temp_trace;
     
     double *SXX[NCS],*SYY[NCS],*SXY[NCS],*SXZ[NCS],*SZY[NCS],*SZZ[NCS];
     double VV[4][9],Szz,Sxx,Syy,Sxy,Sxz,Szy;
@@ -1496,17 +1455,11 @@ void update_stress_strain(struct All_variables *E, int ii)
       E->S2zy[m][e] = E->S2zy[m][e]/vpts;
 
       if (!E->viscosity.SDEPV)  {
-        // compute the 2nd invariant of stress
-        // E->S2inv[m][e]=E->S2xx[m][e]*E->S2xx[m][e]+E->S2xy[m][e]*E->S2xy[m][e]*2.0
-        //               +E->S2yy[m][e]*E->S2yy[m][e]+E->S2zy[m][e]*E->S2zy[m][e]*2.0
-        //               +E->S2zz[m][e]*E->S2zz[m][e]+E->S2xz[m][e]*E->S2xz[m][e]*2.0;
-        // E->S2inv[m][e] = sqrt(0.5*E->S2inv[m][e]);   
-        temp_trace = (E->S2xx[m][e] + E->S2yy[m][e] + E->S2zz[m][e])/3.0;
-        E->S2inv[m][e]=(E->S2xx[m][e]-temp_trace)*(E->S2xx[m][e]-temp_trace)+E->S2xy[m][e]*E->S2xy[m][e]*2.0
-                      +(E->S2yy[m][e]-temp_trace)*(E->S2yy[m][e]-temp_trace)+E->S2zy[m][e]*E->S2zy[m][e]*2.0
-                      +(E->S2zz[m][e]-temp_trace)*(E->S2zz[m][e]-temp_trace)+E->S2xz[m][e]*E->S2xz[m][e]*2.0;
-        E->S2inv[m][e] = sqrt(0.5*E->S2inv[m][e]);   
-
+      // compute the 2nd invariant of stress
+      E->S2inv[m][e]=E->S2xx[m][e]*E->S2xx[m][e]+E->S2xy[m][e]*E->S2xy[m][e]*2.0
+                    +E->S2yy[m][e]*E->S2yy[m][e]+E->S2zy[m][e]*E->S2zy[m][e]*2.0
+                    +E->S2zz[m][e]*E->S2zz[m][e]+E->S2xz[m][e]*E->S2xz[m][e]*2.0;
+      E->S2inv[m][e] = sqrt(0.5*E->S2inv[m][e]);   
       }
     }    /* end for el */
 

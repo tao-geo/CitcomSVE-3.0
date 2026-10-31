@@ -109,7 +109,7 @@ void sphere_expansion_output(E,ic,TG,sphc,sphs,ii,filen)
 
     proc_loc = E->parallel.me_loc[3];
 
-    sphere_expansion_VE(E,ic,TG,sphc,sphs,E->output.llmax);
+    sphere_expansion_VE(E,TG,sphc,sphs,E->output.llmax);
 
     print_spectral(E,sphc,sphs,proc_loc,ii,filen);
 
@@ -224,6 +224,8 @@ static void  compute_sphereh_table(struct All_variables *E)
 
     int m,node,ll,mm,i,j,p,e,lev;
     double t,f,mmf;
+    double rf,rs,rs_rf,rf_rs;
+    int k,ik,global_z_id;
 	
 	if(1){  // comment by tao: here I allocate it even for compressible case. since it is also used in output(postprocess) subroutines.
 		  E->sphere.sphc[0] = (double *)malloc((E->sphere.hindice+3)*sizeof(double));
@@ -243,18 +245,20 @@ static void  compute_sphereh_table(struct All_variables *E)
           E->sphere.sphc_init_load = (double *)malloc((E->sphere.hindice+3)*sizeof(double));
           E->sphere.sphs_init_load = (double *)malloc((E->sphere.hindice+3)*sizeof(double));
 		}
-	if(E->ve_data_cont.compressible){
-		  E->sphere.sphc_c = (double **)malloc((E->mesh.noz+3)*sizeof(double));
-		  E->sphere.sphs_c = (double **)malloc((E->mesh.noz+3)*sizeof(double));
-		  E->sphere.sphc_v = (double **)malloc((E->mesh.noz+3)*sizeof(double));
-		  E->sphere.sphs_v = (double **)malloc((E->mesh.noz+3)*sizeof(double));
-		  for (i=0;i<=E->mesh.noz;i++) {  // comment by tao: add by tao
-		    E->sphere.sphc_c[i] = (double *)malloc((E->sphere.hindice+3)*sizeof(double));
-		    E->sphere.sphs_c[i] = (double *)malloc((E->sphere.hindice+3)*sizeof(double));
-		    E->sphere.sphc_v[i] = (double *)malloc((E->sphere.hindice+3)*sizeof(double));
-		    E->sphere.sphs_v[i] = (double *)malloc((E->sphere.hindice+3)*sizeof(double));
- 		   }
-		}
+	  E->sphere.sphc_c = (double **)malloc((E->mesh.noz+3)*sizeof(double));
+	  E->sphere.sphs_c = (double **)malloc((E->mesh.noz+3)*sizeof(double));
+	  E->sphere.sphc_v = (double **)malloc((E->mesh.noz+3)*sizeof(double));
+	  E->sphere.sphs_v = (double **)malloc((E->mesh.noz+3)*sizeof(double));
+	  for (i=0;i<=E->mesh.noz;i++) {  // comment by tao: add by tao
+	    E->sphere.sphc_c[i] = (double *)malloc((E->sphere.hindice+3)*sizeof(double));
+	    E->sphere.sphs_c[i] = (double *)malloc((E->sphere.hindice+3)*sizeof(double));
+	    E->sphere.sphc_v[i] = (double *)malloc((E->sphere.hindice+3)*sizeof(double));
+	    E->sphere.sphs_v[i] = (double *)malloc((E->sphere.hindice+3)*sizeof(double));
+ 	   }
+
+     E->sphere.tables_rr= (double *)malloc((E->output.llmax+1)*sizeof(double));
+     for (ll=0;ll<=E->output.llmax;ll++)
+        E->sphere.tables_rr[ll]= (double *)malloc(((E->lmesh.noz+1)*(E->mesh.noz+1)+2)*sizeof(double));
 	
   for (m=1;m<=E->sphere.caps_per_proc;m++)   {
     for (mm=0;mm<=E->output.llmax;mm++)  {
@@ -308,15 +312,36 @@ static void  compute_sphereh_table(struct All_variables *E)
         }
     }
 
+
+    for (ll=1;ll<=E->output.llmax;ll++) {
+        for (i=1;i<=E->lmesh.noz;i++) {   //field point
+           rf = E->sphere.R[E->mesh.levmax][i];
+           global_z_id = E->lmesh.nzs + i -1;
+           for (k=1;k <= E->mesh.noz;k++) {  //source point
+              rs = E->sphere.rr[k];
+              rs_rf = rs/rf;
+              rf_rs = rf/rs;
+              ik = k + (i-1)*E->mesh.noz;
+              if (k<=global_z_id)  {   // below the field point
+                E->sphere.tables_rr[ll][ik] = rs*pow(rs_rf,(double)(ll+1))/(2.0*ll+1.0);
+              }
+              else  {  // above
+                E->sphere.tables_rr[ll][ik] = rs*pow(rf_rs,(double)(ll  ))/(2.0*ll+1.0);
+              }
+           } // end k
+         } // end i
+      }  // end ll
+
+
     return;
 }
 
 /* =========================================================
   ========================================================= */
- void sphere_expansion_VE(E,ic,TG,sphc,sphs,llmax)
+ void sphere_expansion_VE(E,TG,sphc,sphs,llmax)
  struct All_variables *E;
  double **TG,*sphc,*sphs;
- int ic,llmax;
+ int llmax;
  {
   void parallel_process_termination();
  void sum_across_surf_sph2();
@@ -341,13 +366,12 @@ static void  compute_sphereh_table(struct All_variables *E)
       sphs[i] = 0.0;
       }
 
-   j1 = (ic==1)?4:0;
    area = 0.0;
 
    for (j=1;j<=E->sphere.caps_per_proc;j++)
      for (es=1;es<=E->lmesh.snel;es++) {
 
-       el = (ic==1)?(E->lmesh.elz*es):(E->lmesh.elz*(es-1)+1);
+//       el = (ic==1)?(E->lmesh.elz*es):(E->lmesh.elz*(es-1)+1);
 
 /*       get_global_1d_shape_fn_2(E,el,&GM,&dGammax,ic,lev,j);
 
@@ -363,29 +387,22 @@ static void  compute_sphereh_table(struct All_variables *E)
            temp0[k] += TG[j][E->sien[j][es].node[k1]] * E->M.vpt[GMVINDEX(k1,k)];
          }
 
-       if (ic==1)  {
-         area += E->gDA1[j][es].vpt[5];
-         for(k=1;k<=onedvpoints[E->mesh.nsd];k++)
-           temp0[k] = temp0[k]*E->gDA1[j][es].vpt[k];
-         }
-       else if (ic==0)  {
+//       if (ic==1)  {
+//         area += E->gDA1[j][es].vpt[5];
+//         for(k=1;k<=onedvpoints[E->mesh.nsd];k++)
+//           temp0[k] = temp0[k]*E->gDA1[j][es].vpt[k];
+//         }
+//       else if (ic==0)  {
          area += E->gDA0[j][es].vpt[5];
          for(k=1;k<=onedvpoints[E->mesh.nsd];k++)
            temp0[k] = temp0[k]*E->gDA0[j][es].vpt[k];
-         }
+//         }
 
        for (ll=0;ll<=llmax;ll++)
          for (mm=0; mm<=ll; mm++)   {
            p = E->sphere.hindex[ll][mm];
 
            for(k=1;k<=onedvpoints[E->mesh.nsd];k++)   {
-             temp1[k] = temp2[k] = temp3[k] = 0.0;
-/*             for(k1=1;k1<=onedvpoints[E->mesh.nsd];k1++)   {
-                temp1[k] += cos(mm*f[k1]) * E->M.vpt[GMVINDEX(k1,k)];
-                temp2[k] += sin(mm*f[k1]) * E->M.vpt[GMVINDEX(k1,k)];
-                temp3[k] += modified_plgndr_a(ll,mm,t[k1]) * E->M.vpt[GMVINDEX(k1,k)];
-                }
-*/
 
              sphc[p]+=temp0[k]*E->Sph_Harm_Tblcs[j][mm][es].cs[k]*E->Sph_Harm_Tbllm[j][p][es].lm[k];
              sphs[p]+=temp0[k]*E->Sph_Harm_Tblcs[j][mm][es].sn[k]*E->Sph_Harm_Tbllm[j][p][es].lm[k];

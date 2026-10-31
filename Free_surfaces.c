@@ -142,32 +142,17 @@ void get_boundary_forces(struct All_variables *E, int count)
 	            remove_average(E,E->slice_ve.botm[2],0);
 	        }
 		}
-	else{
-			/* comment by tao: below is the compressible version.*/
+	else {  // for compressible
 		stress_scaling =  E->data.density*E->data.grav_acc*E->sphere.dradius/E->ve_data_cont.shear_mod;
 			
 		for (m=1;m<=E->sphere.caps_per_proc;m++){
-		  for (e=1;e<=E->lmesh.nel;e++) {
-				/* find delta-rho across the top surface of each element*/
-			density_jump = 0.0;
-			if ( e%E->lmesh.elz==0 ) { /* at the surface */
-			  if(E->parallel.me_loc[3]==E->parallel.nprocz-1)
-				density_jump += E->erho[lev][m][e];  //comment by tao: geruo define erho on vpt, here is on element
-			  else
-				density_jump += E->erho[lev][m][e] - 1.0;
-			}
-			else {
-			   density_jump = density_jump + E->erho[lev][m][e] - E->erho[lev][m][e+1];
-			}
-				/* compute all_stress at top nodes */
-			for (j=1;j<=onedp;j++){
-			  node = E->ien[m][e].node[j+onedp];
-			  E->slice_ve.all_stress[m][node] = density_jump*E->U[m][E->id[m][node].doff[3]]; /* i do not multiply this by grav acc because I only need mass */
-			}
-		 } // end e loop
+		  for (node=1;node<=E->lmesh.nno;node++) {
+                       j = (node-1)%E->lmesh.noz + E->lmesh.nzs;
+		       E->slice_ve.all_stress[m][node] = E->rho_jump1D[E->mesh.levmax][j]*E->U[m][E->id[m][node].doff[3]]; /* i do not multiply this by grav acc because I only need mass */
+		  }
 			
 		  /* add dynamic_oceanload to the Earth's surface */
-	  if (E->ve_data_cont.SLE){
+	       if (E->ve_data_cont.SLE){
 		  if ( E->parallel.me_loc[3]==E->parallel.nprocz-1 ) {
 			for (j=1;j<=E->lmesh.nsf;j++)	 {
 			  node = j*E->lmesh.noz;
@@ -176,26 +161,9 @@ void get_boundary_forces(struct All_variables *E, int count)
  /* note that dynamic_oceanload is non-dim stress, so convert it to non-dim mass - rho_water * u */			
 		}
 	  }
-	  }    
-	}
-			
-       for (m=1;m<=E->sphere.caps_per_proc;m++) {
-	     for (j=1;j<=E->lmesh.SNEL[lev];j++)    {
-		  e = (j-1)*E->lmesh.elz+1;
-			
-		  density_jump = 0.0;
-		  if(E->parallel.me_loc[3]==0)
-			density_jump = density_jump + E->data.density_below/E->data.density -E->erho[lev][m][e];
-		  else
-			density_jump = 1.0 -E->erho[lev][m][e];
-			
-		  for (n=1;n<=onedp;n++) {
-			node = E->ien[m][e].node[n];
-			E->slice_ve.all_stress[m][node] = density_jump*E->U[m][E->id[m][node].doff[3]];
-		  }
-		}
-	 } 
-	}
+	  }   // end for SLE 
+	}  // end for m
+    }  // end for compressible
 
   if(E->ve_data_cont.compressible){
 	  load_to_CM_grav_comp(E, 0, 0);
@@ -320,7 +288,7 @@ void load_boundary_forces(struct All_variables *E, int el, double elt_f[24],int 
 // modified by tao: before shijie used radius2*E->B_R, which will be same as E->B_RR.
 
     /* also pick the bottom surface if it is at CMB */
-    if ((el-1)%E->lmesh.elz==0 /* && E->parallel.me_loc[3]==0*/)  {
+    if ((el-1)%E->lmesh.elz==0 && E->parallel.me_loc[3]==0)  {
       for(k=1;k<=onedvpoints[E->mesh.nsd];k++)   {
         lnode[k] = E->ien[m][el].node[k];
         force[k] = E->slice_ve.all_load[m][lnode[k]];
@@ -421,7 +389,7 @@ void get_surface_loads(struct All_variables *E)
     void load_to_CM_grav() ;
     void load_to_CM_grav_comp();
     void shift_V_to_CM();
-    void calculate_potential(struct All_variables *E, double **X_surf, double **X_cmb, double **potential_surf, double **potential_cmb, int icon);
+    void calculate_potential_incomp();
     double * temp_load_surf[NCS]; 
     double * temp_load_botm[NCS]; 
     double * temp_potential_surf[NCS];
@@ -540,7 +508,7 @@ void get_surface_loads(struct All_variables *E)
           }
 
           // here the load is Xsurf[3] * surf_scaling, non-dim stress (although in the calculate_potential, it is converted to non-dim mass)
-          calculate_potential(E, temp_load_surf, temp_load_botm,
+          calculate_potential_incomp(E, temp_load_surf, temp_load_botm,
                                temp_potential_surf, temp_potential_botm, 0); // icon=0 so not considering the centrifugal potential
 
           // get sph expansion of potential
@@ -555,7 +523,7 @@ void get_surface_loads(struct All_variables *E)
             free(temp_potential_surf[m]);
             free(temp_potential_botm[m]);
           }
-        }
+        }    // end for apply surface load
         else if (E->ve_data_cont.apply_potential==1)  {
           for (m=1;m<=E->sphere.caps_per_proc;m++){
             temp_potential_surf[m] = (double *)malloc((E->lmesh.nsf+1)*sizeof(double));
@@ -583,7 +551,7 @@ void get_surface_loads(struct All_variables *E)
           for (m=1;m<=E->sphere.caps_per_proc;m++){
             free(temp_potential_surf[m]);
           }
-        }
+        }    //end for apply potential
 
         if(E->ve_data_cont.compressible) {  // add by tao: compressible version
             
@@ -617,10 +585,12 @@ void get_surface_loads(struct All_variables *E)
             for (i=1;i<=E->lmesh.nno;i++)
               E->slice_ve.total_load[m][i] = 0.0;
               
+//	  fprintf(E->fp_out,"oooka \n");
           for (m=1;m<=E->sphere.caps_per_proc;m++)
             for (j=1;j<=E->lmesh.nno;j++)	 {
               node = j;
               E->slice_ve.total_load[m][node] = E->slice_ve.all_stress[m][node] * E->grav[E->mesh.levmax][m][node]*stress_scaling;
+//	      fprintf(E->fp_out,"%d %g\n",j,E->slice_ve.total_load[m][node]);
             }
         }
         // incompressible
@@ -726,6 +696,7 @@ void  append_boundary_forces(E)
     return;
 }
 
+// only useful for compressible models
 void  append_multi_boundary_forces(struct All_variables * E)
 //    struct All_variables *E;
 {
@@ -746,28 +717,10 @@ void  append_multi_boundary_forces(struct All_variables * E)
     else  con = 0.0 ;
 
     for (m=1;m<=E->sphere.caps_per_proc;m++) {
-      for (e=1;e<=E->lmesh.nel;e++){
-        /* find delta-rho across the top surface of each element*/
-        density_jump = 0.0;
-        if ( e%E->lmesh.elz==0 /*&& E->parallel.me_loc[3]==E->parallel.nprocz-1 */) { /* at the surface */
-          //for (n=1;n<=vpts;n++)
-          if(E->parallel.me_loc[3]==E->parallel.nprocz-1)
-            density_jump += E->erho[lev][m][e];
-		  else
-			density_jump += E->erho[lev][m][e] - 1.0;
-          //density_jump = density_jump/vpts;
-        }
-        else {
-          //for (n=1;n<=vpts;n++)
-            density_jump = density_jump + E->erho[lev][m][e] - E->erho[lev][m][e+1];
-          //density_jump = density_jump/vpts;
-        }
-       /* compute all_load at top nodes */
-       for (j=1;j<=onedp;j++){
-         node = E->ien[m][e].node[j+onedp];
-         E->slice_ve.all_load[m][node] = -E->slice_ve.total_load[m][node] + con*density_jump*E->slice_ve.total_potential[m][node];
-       }
-      } // end e loop
+      for (node=1;node<=E->lmesh.nno;node++) {
+           j = (node-1)%E->lmesh.noz + E->lmesh.nzs;
+           E->slice_ve.all_load[m][node] = -E->slice_ve.total_load[m][node] + con*E->rho_jump1D[lev][j]*E->slice_ve.total_potential[m][node];
+      } // end node loop
 
       /* add dynamic_oceanload to the Earth's surface */
       if ( E->parallel.me_loc[3]==E->parallel.nprocz-1 ) {
@@ -779,26 +732,12 @@ void  append_multi_boundary_forces(struct All_variables * E)
       }
     }  
 
-    if (1 /*E->parallel.me_loc[3]==0*/)                              // CMB
-        for (m=1;m<=E->sphere.caps_per_proc;m++) {
-          for (j=1;j<=E->lmesh.SNEL[lev];j++)    {
-            e = (j-1)*E->lmesh.elz+1;
-
-            density_jump = 0.0;
-            //for (n=1;n<=vpts;n++)
-            if(E->parallel.me_loc[3]==0)
-              density_jump = density_jump + E->data.density_below/E->data.density -E->erho[lev][m][e];
-			else
-			  density_jump = 1.0 -E->erho[lev][m][e];
-            //density_jump = density_jump/vpts;
-
-            for (n=1;n<=onedp;n++) {
-              node = E->ien[m][e].node[n];
-              E->slice_ve.all_load[m][node] = -E->slice_ve.total_load[m][node] + con*density_jump*E->slice_ve.total_potential[m][node];
-            }
-          }
-        }
-
+//    fprintf(E->fp_out,"in append_multi %d %d %d\n",E->monitor.count,E->monitor.solution_cycles,E->lmesh.nno);
+//    for (m=1;m<=E->sphere.caps_per_proc;m++)
+//          for (node=1;node<=E->lmesh.nno;node++)    {
+//                  fprintf(E->fp_out,"%d %g %g\n",node,E->slice_ve.all_load[m][node],E->slice_ve.total_potential[m][node]);
+//          }
+//     fflush(E->fp_out);
 
     return;
 }
@@ -810,12 +749,12 @@ void  append_multi_boundary_forces(struct All_variables * E)
  * Takes the surface masses given in X_surf/cmb, computes their gravitational
  * potential at the surface and CMB, and puts it in potential_surf/cmb. 
  * If E->control.polar_wander is true, it further changes the potential arrays
- * (in spherical harmonic l,m=2,1) to via polar_wander_effects.
+ * (in spherical harmonic l,m=2,1) to via polar_wander_effects_incomp.
  * Notes:
  *     X_surf/cmb must be nondimensional stresses (such as E->iceload).
  *     This routine will not change the values of X_surf and X_cmb.
  *=========================================================================== */
-void calculate_potential(E,X_surf,X_cmb,potential_surf,potential_cmb,icon)
+void calculate_potential_incomp(E,X_surf,X_cmb,potential_surf,potential_cmb,icon)
     struct All_variables *E;
     double **X_surf;
     double **X_cmb;
@@ -824,30 +763,23 @@ void calculate_potential(E,X_surf,X_cmb,potential_surf,potential_cmb,icon)
     int icon;
 {
     int ib,is,m,ll,ll1,ll2,mm,p,i,j,k,n;
-    double con,r,t,f,rir,ri,ro,modified_plgndr_a();
+    int isource,ipolarw;
     double density_surf,density_cmb;
+    static double *potential_temp[NCS];
 
     static int been=0;
-    static double brll1[65],brll2[65];
-    static double srll1[65],srll2[65];
     void  sphere_expansion_VE();
-    void  polar_wander_effects();
+    void  polar_wander_effects_incomp();
     void  exchange_sphcs();
+    void calculate_potential_final();
 
-    ri = E->sphere.ri;
-    ro = E->sphere.ro;
     density_surf = 1.0;
     density_cmb = (E->data.density_below-E->data.density)/E->data.density;
 
     if (been==0)  {
         been = 1;
-        rir = 1.0;
-        for (ll=1;ll<=E->output.llmax;ll++)    {
-            brll1[ll] = pow(ri,(double)(ll))/(2.0*ll+1.0); 
-            brll2[ll] = ri*pow(rir,(double)(ll+1))/(2.0*ll+1.0); 
-            srll1[ll] = pow(ro,(double)(ll))/(2.0*ll+1.0); 
-            srll2[ll] = ri*pow(ri,(double)(ll+1))/(2.0*ll+1.0); 
-        }
+      for (m=1;m<=E->sphere.caps_per_proc;m++)
+         potential_temp[m]=(double *) malloc((E->lmesh.nno+2)*sizeof(double)); 
     }
 
    for (m=1;m<=E->sphere.caps_per_proc;m++)
@@ -858,6 +790,13 @@ void calculate_potential(E,X_surf,X_cmb,potential_surf,potential_cmb,icon)
         E->Xsurf[2][m][j] = 0.0;
         }
 
+   for (k=1;k<=E->mesh.noz;k++)   {
+   for (p=0;p<=E->sphere.hindice;p++)   {
+            E->sphere.sphc_c[k][p] = 0.0;
+            E->sphere.sphs_c[k][p] = 0.0;
+	    }
+	}
+
     // Ylm expansion of surface mass:
     if (E->parallel.me_loc[3]==E->parallel.nprocz-1)   {
         for (m=1;m<=E->sphere.caps_per_proc;m++)
@@ -865,11 +804,9 @@ void calculate_potential(E,X_surf,X_cmb,potential_surf,potential_cmb,icon)
             // scale nondim stress -> nondim height of rock
             E->Xsurf[1][m][j] = X_surf[m][j]/E->ve_data_cont.surf_scaling;
         }
-        sphere_expansion_VE(E,1,E->Xsurf[1],
+        sphere_expansion_VE(E,E->Xsurf[1],
                          E->sphere.sphc[0],E->sphere.sphs[0],E->output.llmax);
-        for (ll=0;ll<=E->output.llmax;ll++)
-        for (mm=0;mm<=ll;mm++)   {
-            p = E->sphere.hindex[ll][mm];
+        for (p=0;p<=E->sphere.hindice;p++)   {
             E->sphere.sphc[0][p] *= density_surf;
             E->sphere.sphs[0][p] *= density_surf;
         }
@@ -882,60 +819,51 @@ void calculate_potential(E,X_surf,X_cmb,potential_surf,potential_cmb,icon)
             // scale nondim stress -> nondim height of cmb boundary
             E->Xsurf[2][m][j] = X_cmb[m][j]/E->ve_data_cont.botm_scaling;
         }
-        sphere_expansion_VE(E,0,E->Xsurf[2],
+        sphere_expansion_VE(E,E->Xsurf[2],
                           E->sphere.sphc[1],E->sphere.sphs[1],E->output.llmax);
-        for (ll=0;ll<=E->output.llmax;ll++)
-        for (mm=0;mm<=ll;mm++)   {
-            p = E->sphere.hindex[ll][mm];
+        for (p=0;p<=E->sphere.hindice;p++)   {
             E->sphere.sphc[1][p] *= density_cmb;
             E->sphere.sphs[1][p] *= density_cmb;
         }
     }
 
-    if (E->parallel.nprocz>1)  // if >1 cap in z-direction (probably not)
+    if (E->parallel.nprocz>1) { // if >1 cap in z-direction (probably not)
         exchange_sphcs(E,E->sphere.sphc[0],E->sphere.sphs[0],
                          E->sphere.sphc[1],E->sphere.sphs[1]);
+                         }
+    
 
-    // Now calculate potential:
-        // cmb:
+    if (E->parallel.me_loc[3]==E->parallel.nprocz-1 || E->parallel.me_loc[3]==0)   {
+        for (p=0;p<=E->sphere.hindice;p++)   {
+            E->sphere.sphc_c[E->mesh.noz][p] = E->sphere.sphc[0][p];
+            E->sphere.sphs_c[E->mesh.noz][p] = E->sphere.sphs[0][p];
+            E->sphere.sphc_c[1][p] = E->sphere.sphc[1][p];
+            E->sphere.sphs_c[1][p] = E->sphere.sphs[1][p];
+        }
+    }
+
+    isource=0;
+    calculate_potential_final(E,E->sphere.sphc_c,E->sphere.sphs_c,potential_temp,E->output.llmax,E->ve_data_cont.compressible,isource,icon);
+
     if (E->parallel.me_loc[3]==0)  {
       for (m=1;m<=E->sphere.caps_per_proc;m++)
       for (j=1;j<=E->lmesh.nsf;j++) {
-        potential_cmb[m][j] = 0.0;
-        for (ll=1;ll<=E->output.llmax;ll++)  
-        for (mm=0;mm<=ll;mm++)   { 
-            p = E->sphere.hindex[ll][mm]; 
-            potential_cmb[m][j] += ( E->Tbl_cs[m][mm][j]*
-              (brll1[ll]*E->sphere.sphc[0][p] + brll2[ll]*E->sphere.sphc[1][p])
-               + E->Tbl_sn[m][mm][j]*
-              (brll1[ll]*E->sphere.sphs[0][p] + brll2[ll]*E->sphere.sphs[1][p]))
-                *E->Tbl_lm[m][p][j];
+        n = (j-1)*E->lmesh.noz + 1;
+        potential_cmb[m][j] = potential_temp[m][n];
         }
       }
-    }
-        // surface:
     if (E->parallel.me_loc[3]==E->parallel.nprocz-1)   {
       for (m=1;m<=E->sphere.caps_per_proc;m++)
       for (j=1;j<=E->lmesh.nsf;j++) {
-        potential_surf[m][j] = 0.0; 
-        for (ll=1;ll<=E->output.llmax;ll++)   
-        for (mm=0;mm<=ll;mm++)   { 
-            p = E->sphere.hindex[ll][mm]; 
-            potential_surf[m][j] += ( E->Tbl_cs[m][mm][j]*
-             (srll1[ll]*E->sphere.sphc[0][p] + srll2[ll]*E->sphere.sphc[1][p])
-                    + E->Tbl_sn[m][mm][j]*
-             (srll1[ll]*E->sphere.sphs[0][p] + srll2[ll]*E->sphere.sphs[1][p]) )
-                *E->Tbl_lm[m][p][j];
+        n = j*E->lmesh.noz;
+        potential_surf[m][j] = potential_temp[m][n];
         }
       }
-    }
 
     // alter the Y_21 potential, if polar_wander is on:
     if (E->ve_data_cont.polar_wander && icon==1)  
         // Xsurf[1/2] have already been converted to nondim height of boundary
-//        polar_wander_effects( E, E->Xsurf[1], E->Xsurf[2], 
-//                                 potential_surf, potential_cmb );
-        polar_wander_effects( E, X_surf, X_cmb, 
+        polar_wander_effects_incomp( E, X_surf, X_cmb, 
                                  potential_surf, potential_cmb );
 
     return;
@@ -1015,7 +943,7 @@ void exchange_depth_to_all(struct All_variables *E, double *depth)
 
 void calculate_potential_comp(struct All_variables *E, double ** all_potential, int load_only)
 {
-	void calculate_potential_comp_OR_correct_CM(struct All_variables *E, double ** all_potential, int load_only, int icon, int Only_Correct_CM, int add_incr_CM);
+	void calculate_potential_comp_OR_correct_CM();
 
 	calculate_potential_comp_OR_correct_CM(E,all_potential,load_only,1,0,0);
 	return;
@@ -1037,17 +965,15 @@ void calculate_potential_comp_OR_correct_CM(struct All_variables *E, double ** a
     double density_surf,density_cmb;
 
     static int been=0;
-//    static double brll1[65],brll2[65];
-//    static double srll1[65],srll2[65];
     void  sphere_expansion_VE();
-    void  polar_wander_effects();
     void  exchange_sphcs();
     void remove_average();
     void construct_c3x3matrix_el();
+    void calculate_potential_final();
+    void polar_wander_effects_comp();
+    void center_mass_effects_comp();
 
-    int global_z_id;
-    int node;
-    int llmax;
+    int global_z_id,noz,node,llmax;
     static double *global_r; 
 
     static double * rho_div_u[NCS];
@@ -1085,7 +1011,6 @@ void calculate_potential_comp_OR_correct_CM(struct All_variables *E, double ** a
         been = 1;
         rir = 1.0;
 
-        global_r = (double *) malloc((E->mesh.noz+2)*sizeof(double));
         for(m=1; m<=E->sphere.caps_per_proc;m++){
           rho_div_u[m] = (double *) malloc((E->lmesh.nno+2)*sizeof(double));
         }
@@ -1096,29 +1021,6 @@ void calculate_potential_comp_OR_correct_CM(struct All_variables *E, double ** a
         C_conv = -omega*omega/(4.0*M_PI*E->data.grav_const*E->data.density);
           // convert non-dim r^2(m1*cosf+m2*sinf)*sintcost into non-dim centrifugal potential, which can be added into the potential terms;
           // to dimensionalize the potential, multiply by 4*pi*G*rho*R^2.
-		
-        //>>>> add by tao: exchange global radius
-
-        for (i = 1; i <= E->mesh.noz; ++i) {
-            global_r[i] = 0.0;
-        }
-          
-        for(i=2; i<=E->lmesh.noz;i++){
-          for(m=1;m<=E->sphere.caps_per_proc;m++){
-            node = i; // first column
-            global_z_id = E->lmesh.nzs + i -1;
-            global_r[global_z_id] = E->SX[E->mesh.levmax][m][3][node];
-          }
-        }
-          
-        if(E->parallel.me_loc[3]==0){
-          global_r[1] = E->SX[E->mesh.levmax][1][3][1];
-        }
-          
-        if(E->parallel.nprocz>1){
-            exchange_depth_to_all( E, global_r);
-        }
-          //<<<< end tao
     }
 
     //comment by tao: should set to 0 every time called, since only layer in this processor is modified, others will be lefted.
@@ -1126,8 +1028,6 @@ void calculate_potential_comp_OR_correct_CM(struct All_variables *E, double ** a
       for (p = 0; p < E->sphere.hindice+2; ++p) {
         E->sphere.sphc_c[i][p] = 0.;
         E->sphere.sphs_c[i][p] = 0.;
-        E->sphere.sphc_v[i][p] = 0.;
-        E->sphere.sphs_v[i][p] = 0.;
       }
     }
 
@@ -1136,37 +1036,6 @@ void calculate_potential_comp_OR_correct_CM(struct All_variables *E, double ** a
     else
       llmax=2; // although 1 is enough.
 
-  /*
-    Part I.1: get sphc_c and sphs_c, Ylm expansion of all_stress: the mass perturbation at each boundary
-  */
-    for (i=1;i<=E->lmesh.noz;i++) {
-            
-        //>>>> modify by tao: below from geruo
-          // save the ith layer into E->Xsurf[1]
-          for (m=1;m<=E->sphere.caps_per_proc;m++) {
-            for (j=1;j<=E->lmesh.nsf;j++) {
-              node = (j-1)*E->lmesh.noz+i;
-              E->Xsurf[1][m][j] = E->slice_ve.all_stress[m][node];
-            }
-          }
-          // if I(Geruo) wasn't wrong, it will produce identical results for ic=1 or 0
-          // comment by tao: here should use global id on z dir
-          global_z_id = E->lmesh.nzs + i -1;
-          sphere_expansion_VE(E,0,E->Xsurf[1],
-              E->sphere.sphc_c[global_z_id],E->sphere.sphs_c[global_z_id],llmax);  //comment by tao: here should be global_id
-        //<<<< end tao: above from geruo
-    }
-
-	  //>>>> add by tao:
-    if (E->parallel.nprocz>1)  // if >1 cap in z-direction (probably not)
-      for(i=1; i<=E->mesh.noz; i++) //comment by tao: global z;
-      {
-        exchange_sphcs_to_all(E,E->sphere.sphc_c, i);
-        exchange_sphcs_to_all(E,E->sphere.sphs_c, i);
-      }
-	  //<<<< end tao: 
-
-
   /* 
     Part I.2. get sphc_v and sphs_v. calculate div_u 's sph expansion, 
               only needed for !load_only 
@@ -1174,11 +1043,11 @@ void calculate_potential_comp_OR_correct_CM(struct All_variables *E, double ** a
             // here will get sphere.sphc_v and sphs_v as geruo use sc_v ss_v.
   */
 
-    if (!load_only){
-      for (m=1;m<=E->sphere.caps_per_proc;m++)
-              for(i=1;i<=E->lmesh.nno;i++)
-                rho_div_u[m][i] = 0.0;
+    for (m=1;m<=E->sphere.caps_per_proc;m++)
+         for(i=1;i<=E->lmesh.nno;i++)
+              rho_div_u[m][i] = 0.0;
 
+    if (!load_only){
             for (m=1;m<=E->sphere.caps_per_proc;m++)
             for (el=1;el<=E->lmesh.nel;el++) {
               gnxx = E->gNX[m][el].vpt;
@@ -1218,777 +1087,83 @@ void calculate_potential_comp_OR_correct_CM(struct All_variables *E, double ** a
                 node = E->ien[m][el].node[j];
                 rho_div_u[m][node] += E->TWW[E->mesh.levmax][m][el].node[j]*temp;
               }
-
             } // end el loop
 
             (E->exchange_node_d) (E,rho_div_u,E->mesh.levmax);
 
-          //add by tao: the TWW definition is different between Geruo's and Shijie's
-          for(m=1;m<=E->sphere.caps_per_proc;m++)
+            for(m=1;m<=E->sphere.caps_per_proc;m++)
             for(node=1;node<=E->lmesh.nno;node++)
-              rho_div_u[m][node] *= E->MASS[E->mesh.levmax][m][node];
+               rho_div_u[m][node] *= E->MASS[E->mesh.levmax][m][node];
 
-          for (i=1;i<E->lmesh.noz;i++) {
+            for(m=1;m<=E->sphere.caps_per_proc;m++)
+            for(node=1;node<=E->lmesh.nno;node++)  {
+	      i = (node-1)%E->lmesh.noz+E->lmesh.nzs;
+              dlayer = (E->sphere.rr[i+1]-E->sphere.rr[i-1])*0.5;
+              if (i==E->mesh.noz) dlayer = (E->sphere.rr[i]-E->sphere.rr[i-1])*0.5;
+              else if (i==1) dlayer = (E->sphere.rr[i+1]-E->sphere.rr[i])*0.5;
+              rho_div_u[m][node] = rho_div_u[m][node]*dlayer;
+	       // rho_div_u is now the surface density like all_stress
+	    }
+
+	 }   // end for if (!load_only)
+	    
+        noz = E->lmesh.noz-1;
+        if (E->parallel.me_loc[3]==E->parallel.nprocz-1) noz = E->lmesh.noz;
+            // noz as defined avoids double counting in exchange_sphcs_to_all
+        for (i=1;i<=noz;i++)  {
               // save the ith layer into E->Xsurf[1]
-              for (m=1;m<=E->sphere.caps_per_proc;m++) {
-                for (j=1;j<=E->lmesh.nsf;j++) {
+          if (!load_only)  {
+            for (m=1;m<=E->sphere.caps_per_proc;m++) 
+              for (j=1;j<=E->lmesh.nsf;j++) {
                   node = (j-1)*E->lmesh.noz+i;
-                  E->Xsurf[1][m][j] = (rho_div_u[m][node]+rho_div_u[m][node+1])/2.0;
-                }
-              }
-              global_z_id = E->lmesh.nzs + i -1;
-              // raw_sphere_expansion(E,0,E->Xsurf[1],E->sphere.sphc_v[i],E->sphere.sphs_v[i]);
-                sphere_expansion_VE(E,0,E->Xsurf[1],
-                                    E->sphere.sphc_v[global_z_id],E->sphere.sphs_v[global_z_id], llmax);  
-          } // end i loop  
-
-          if (E->parallel.nprocz>1)  // if >1 cap in z-direction (probably not)
-            for(i=1; i<E->mesh.noz; i++) //comment by tao: global z; i < noz
-            {
-              exchange_sphcs_to_all(E,E->sphere.sphc_v, i);
-              exchange_sphcs_to_all(E,E->sphere.sphs_v, i);
-            }
-    } // end if !load_only, obtain sphc_v and sphs_v
-
-
-  /*
-    The following part of this subroutine is either calculating potential and correcting CM motion,
-    depending on the value of Only_Correct_CM.
-  */
-
-
-  /*  
-    Part II. Here is for calculating potential (Only_Correct_CM is false)
-  */
-
-    if(!Only_Correct_CM){
-        
-      for (m=1;m<=E->sphere.caps_per_proc;m++) {
-            for (i=1;i<=E->lmesh.nno;i++) {
-                all_potential[m][i] = 0.0;
-            }
-      }
-
-      // Now calculate potential:
-      //>>>> add by tao: all layer:
-
-      for (ll=1;ll<=E->output.llmax;ll++) // degree 0 term is supposed to be zero at surface, but here we are excluding it for each layer
-      for (mm=0;mm<=ll;mm++) {
-        p = E->sphere.hindex[ll][mm];
-            
-        for (m=1;m<=E->sphere.caps_per_proc;m++) {
-        for (i=1;i<=E->lmesh.noz;i++) {
-            // compute phi_lm(r)
-            phi_lm_cs = 0.0;
-            phi_lm_sn = 0.0;
-            r = E->SX[E->mesh.levmax][m][3][i];
-            global_z_id = E->lmesh.nzs + i -1;
-
-            // 1. the boundary terms
-            for (k=1;k <= global_z_id;k++) {  //comment by tao: inside layers
-              ri = global_r[k]; // the smaller radius // todo_tao: get from global_k
-              ro = r; 							 // the larger radius
-              tmp = ri*pow(ri/ro,(double)(ll+1))/(2.0*ll+1.0);
-              phi_lm_cs += tmp * E->sphere.sphc_c[k][p];
-              phi_lm_sn += tmp * E->sphere.sphs_c[k][p];
-            }
-            if (global_z_id < E->mesh.noz) { // comment by tao: outside layers
-              for (k=global_z_id+1;k<=E->mesh.noz;k++) {
-                ri = r;
-                ro = global_r[k];
-                tmp = ri*pow(ri/ro,(double)(ll-1))/(2.0*ll+1.0);
-                phi_lm_cs += tmp*  E->sphere.sphc_c[k][p];
-                phi_lm_sn += tmp*  E->sphere.sphs_c[k][p];
-              }
-            }
-
-            // 2. volume div_v   //done tao
-
-            if(!load_only){
-              for(k=1;k<global_z_id;k++) {
-                ri = (global_r[k] + global_r[k+1])/2.0;
-                ro = r;
-                dlayer = global_r[k+1] - global_r[k];
-                tmp = ri*pow(ri/ro,(double)(ll+1))/(2.0*ll+1.0);
-                phi_lm_cs -= tmp*E->sphere.sphc_v[k][p]*dlayer;
-                phi_lm_sn -= tmp*E->sphere.sphs_v[k][p]*dlayer;
-              }
-              for(k=global_z_id;k<E->mesh.noz;k++) {
-                ri = r;
-                ro = (global_r[k] + global_r[k+1])/2.0;
-                dlayer = global_r[k+1] - global_r[k];
-                tmp = ri*pow(ri/ro,(double)(ll-1))/(2.0*ll+1.0);
-                phi_lm_cs -= tmp*E->sphere.sphc_v[k][p]*dlayer;
-                phi_lm_sn -= tmp*E->sphere.sphs_v[k][p]*dlayer;
-              }
-            } //end of div_v
-
-            // comment by tao: polar_wander, copy from geruo
-            if (E->ve_data_cont.polar_wander && icon == 1 && E->parallel.me_loc[3] == E->parallel.nprocz-1 && i==E->lmesh.noz && ll==2 && mm==1){
-                  M[0] = M_conv * phi_lm_cs * pow(E->SX[E->mesh.levmax][m][3][i],3.0);
-                  M[1] = M_conv * phi_lm_sn * pow(E->SX[E->mesh.levmax][m][3][i],3.0);
-                  //		M[0] = E->ve_data_cont.damping * M[0] + (1-E->ve_data_cont.damping) * E->ve_data_cont.PW_incr[0];
-                  //		M[1] = E->ve_data_cont.damping * M[1] + (1-E->ve_data_cont.damping) * E->ve_data_cont.PW_incr[1];
-                    E->ve_data_cont.PW_incr[0] = M[0];
-                    E->ve_data_cont.PW_incr[1] = M[1];
-            }
-            // sum 1+2
-            for (j=1;j<=E->lmesh.nsf;j++) {
-                node = (j-1)*E->lmesh.noz+i;
-                all_potential[m][node] += (phi_lm_cs*E->Tbl_cs[m][mm][j] + phi_lm_sn*E->Tbl_sn[m][mm][j])
-                            *E->Tbl_lm[m][p][j];          
-            }
-        } // end of (i=1;i<=E->lmesh.noz;i++) loop
-          
-        } // end of (m=1;m<=E->sphere.caps_per_proc;m++) loop
-      }
-
-      // !!! only top processors have PW_incr now. should send to all other processors below.
-      if(E->ve_data_cont.polar_wander && icon == 1 && E->parallel.nprocz>1){
-            //printf("MPI: before pass M, M[0]= %e, M[1]= %e, proc %d\n", M[0], M[1], E->parallel.me);
-            if(E->parallel.me_loc[3] == E->parallel.nprocz-1){
-                  //send to E->parallel.me + procz (1 to E->parallel.nprocz)
-              for(procz=0; procz<E->parallel.nprocz-1; procz++)
-                      MPI_Send(M, 2, MPI_DOUBLE, procz, 0, E->parallel.vertical_comm);
-                }
-            if(E->parallel.me_loc[3] != E->parallel.nprocz-1){
-                    MPI_Recv(M,2, MPI_DOUBLE, E->parallel.nprocz-1, 0, E->parallel.vertical_comm, MPI_STATUS_IGNORE);
-                    //receive from E->parallel.me - E->parallel.me_loc[3];
-                }
-              //printf("MPI: finish pass M, M[0]= %e, M[1]=%e, proc %d\n", M[0], M[1], E->parallel.me);
-                E->ve_data_cont.PW_incr[0] = M[0];
-                E->ve_data_cont.PW_incr[1] = M[1];
-      }
-      
-
-      // add centrifugal potential
-      if (E->ve_data_cont.polar_wander && icon==1){
-            // compute: -r^2*omega^2*sin(t)*cos(t)*[M[0]cos(f) + M[1]sin(f)]
-          for(m=1;m<=E->sphere.caps_per_proc;m++)
-          for(node=1;node<=E->lmesh.nno;node++){
-              t = E->SX[E->mesh.levmax][m][1][node];
-              f = E->SX[E->mesh.levmax][m][2][node];
-              r = E->SX[E->mesh.levmax][m][3][node];
-              centri_pot = r*r*sin(t)*cos(t)*(M[0]*cos(f)+M[1]*sin(f))*C_conv;
-              all_potential[m][node] += centri_pot;
-          }
-      }
-
-      /* calculate E->ve_data_cont.potential_vary_PW.  */
-      if (E->ve_data_cont.polar_wander && icon==1){ // what is icon? seems an option for centrifuagal potential.
-
-        if (!been_here) {
-            been_here = 1;
-                
-          for (m=1;m<=E->sphere.caps_per_proc;m++)   {
-              oldpotl_surf[m] =(double*)malloc((E->lmesh.nsf+2)*sizeof(double));
-              oldpotl_cmb[m] = (double*)malloc((E->lmesh.nsf+2)*sizeof(double));
-              for (n=1;n<=E->lmesh.nsf;n++)  { 
-                oldpotl_surf[m][n] = 0.0;
-                oldpotl_cmb[m][n] = 0.0;
-            }
-
-            }
-        }
-
-        potential[0]=potential[1]=0.0;
-        prod[0]=prod[1]=0.0;
-        for (m=1;m<=E->sphere.caps_per_proc;m++)
-        for (n=1;n<=E->lmesh.nsf;n++)   {
-            t = E->SX[E->mesh.levmax][m][1][n*E->lmesh.NOZ[E->mesh.levmax]];
-            f = E->SX[E->mesh.levmax][m][2][n*E->lmesh.NOZ[E->mesh.levmax]];
-              
-            if (E->parallel.me_loc[3]==E->parallel.nprocz-1)   {
-                  node = (n-1)*E->lmesh.noz + E->lmesh.noz;
-                      //potential_surf[m][n] = all_potential[m][node];
-                    potential[0] += all_potential[m][node]*all_potential[m][node];
-                    temp = all_potential[m][node]-oldpotl_surf[m][n];
-                    potential[1] += temp*temp;
-                    oldpotl_surf[m][n] = all_potential[m][node];
-              }
-            if (E->parallel.me_loc[3]==0)   {
-                      //potential_cmb [m][n] = ;
-                    node = (n-1)*E->lmesh.noz + 1;
-                    potential[0] += all_potential[m][node]*all_potential[m][node];
-                    temp = all_potential[m][node]-oldpotl_cmb[m][n];
-                    potential[1] += temp*temp;
-                    oldpotl_cmb[m][n] = all_potential[m][node];
-            }
-        }
-
-        MPI_Allreduce(potential,prod,3,MPI_DOUBLE,MPI_SUM,E->parallel.world);
-        E->ve_data_cont.potential_vary_PW = sqrt(prod[1]/prod[0]);
-      }// end calculate E->ve_data_cont.potential_vary_PW
-				
-	  }
-    // end if !Only_Correct_CM
-
-
-  /*
-    Part III. This part functions to correct CM motion. (for Only_Correct_CM)
-      This part corrects the all_stress to account for the effect of CM.
-      Having it here is not ideal, but is convienent for now. The reason is it requires the potential to be calculated.
-  */
-
-	//comment by tao: deal with degree-1 motion. why only one surface point (for each processor) is used in calculate CM? might cause CM different for each processor.
-	if (Only_Correct_CM){ 
-		for (i=0;i<3;i++) 
-      cm[i] = 0.0;
-
-		// compute Earth's mass
-    if (add_incr_CM != 0 || been==1){
-        Earth_mass = 0.0;
-        tmp = 0.0;
-
-        for (m=1;m<=E->sphere.caps_per_proc;m++)
-        for (el=1;el<=E->lmesh.nel;el++) {
-          for (j=1;j<=vpts;j++) {
-            gnda = E->gDA[m][el].vpt;
-            tmp += E->erho[E->mesh.levmax][m][el]*gnda[j]*g_point[j].weight[dims-1];
-          } // end j loop
-        } // end el loop		  
-        MPI_Allreduce(&tmp,&Earth_mass,1,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD);
-        Earth_mass += 4./3.*M_PI*E->data.density_below/E->data.density*pow(E->sphere.ri,3);
-              
-        // if(E->parallel.me==0)
-        //   printf("Geruo's Earth mass: %g \n", Earth_mass);
-            /*  
-              double surface_g = 9.82;
-          Earth_mass = (surface_g* pow(E->sphere.dradius,2) / E->data.grav_const)/(E->data.density * pow(E->sphere.dradius,3));
-                if(E->parallel.me==0)
-                  printf("Use mine Earth mass: %g \n", Earth_mass); 
-        */
-	  } // end compute Earth's mass
-
-
-    // compute deg-1 motion (cm) from ll=1 and i=E->lmesh.noz, and then update all_stress
-    if(E->parallel.me_loc[3] == E->parallel.nprocz-1){
-      ll=1;
-      for (mm=0;mm<=ll;mm++){
-        p = E->sphere.hindex[ll][mm];
-        for(m=1;m<=E->sphere.caps_per_proc;m++){
-          i=E->lmesh.noz; // surface. only one point as this grid. first column of this grid.
-          phi_lm_cs = 0.0;
-          phi_lm_sn = 0.0;
-          r = E->SX[E->mesh.levmax][m][3][i];
+                  E->Xsurf[1][m][j] = E->slice_ve.all_stress[m][node] 
+			            - rho_div_u[m][node];
+                  }
+	      }
+	  else {
+            for (m=1;m<=E->sphere.caps_per_proc;m++) 
+              for (j=1;j<=E->lmesh.nsf;j++) {
+                  node = (j-1)*E->lmesh.noz+i;
+                  E->Xsurf[1][m][j] = E->slice_ve.all_stress[m][node];
+                  }
+	      }
           global_z_id = E->lmesh.nzs + i -1;
-          for (k=1;k<=global_z_id;k++) {
-            ri = global_r[k]; // the smaller radius
-            ro = r;							   // the larger radius
-            tmp = ri*pow(ri/ro,(double)(ll+1))/(2.0*ll+1.0);
-            phi_lm_cs += tmp*E->sphere.sphc_c[k][p];
-            phi_lm_sn += tmp*E->sphere.sphs_c[k][p];
-          }
-          if (!load_only){
-            for(k=1;k<global_z_id;k++) {
-              ri = (global_r[k] + global_r[k+1])/2.0;
-              ro = r;
-              dlayer = global_r[k+1] - global_r[k];
-              tmp = ri*pow(ri/ro,(double)(ll+1))/(2.0*ll+1.0);
-              phi_lm_cs -= tmp*E->sphere.sphc_v[k][p]*dlayer;
-              phi_lm_sn -= tmp*E->sphere.sphs_v[k][p]*dlayer;
-              }
-          }
+          sphere_expansion_VE(E,E->Xsurf[1],
+                  E->sphere.sphc_c[global_z_id],E->sphere.sphs_c[global_z_id],llmax);
+         }  // end for loop i 
 
-          if (mm==1) {
-            cm[0] = -phi_lm_cs*sqrt(12.*M_PI)/Earth_mass*pow(E->SX[E->mesh.levmax][m][3][i],2);
-            cm[1] = -phi_lm_sn*sqrt(12.*M_PI)/Earth_mass*pow(E->SX[E->mesh.levmax][m][3][i],2);
-          }
-          else {
-            cm[2] = phi_lm_cs*sqrt(12.*M_PI)/Earth_mass;
-          }
-        }
+    if (E->parallel.nprocz>1)  // if >1 cap in z-direction (probably not)
+      for(k=1; k<=E->mesh.noz; k++) {  //comment by tao: global z;
+        exchange_sphcs_to_all(E,E->sphere.sphc_c, k);
+        exchange_sphcs_to_all(E,E->sphere.sphs_c, k);
       }
-    } // end of cm calculation
 
+  /*
+    The following part of this subroutine is either calculating potential or correcting CM motion, depending on the value of Only_Correct_CM.
+  */
 
-    // !!! only top processors have cm now. send cm to all other vertical processors.
-    if(E->parallel.nprocz>1){
-      //printf("MPI: before pass cm, %d\n", E->parallel.me);
-      if(E->parallel.me_loc[3] == E->parallel.nprocz-1){
-            //send to E->parallel.me + procz (1 to E->parallel.nprocz)
-      for(procz=0; procz<E->parallel.nprocz-1; procz++)
-        MPI_Send(cm, 3, MPI_DOUBLE, procz, 0, E->parallel.vertical_comm);
-      }
-        if(E->parallel.me_loc[3] != E->parallel.nprocz-1){
-      MPI_Recv(cm,3, MPI_DOUBLE, E->parallel.nprocz-1, 0, E->parallel.vertical_comm, MPI_STATUS_IGNORE);
-      //receive from E->parallel.me - E->parallel.me_loc[3];
-      }
-    }
-        
-    if (add_incr_CM == 1)
-      for (j=0;j<3;j++) E->ve_data_cont.CM_incr[j] = cm[j];
-    else if (add_incr_CM == 2)
-      for (j=0;j<3;j++) E->ve_data_cont.CM_incr[j] += cm[j];
+  if  (!Only_Correct_CM)  {     // if Only_Correct_CM is false
+      // Now calculate potential:
+      calculate_potential_final(E,E->sphere.sphc_c,E->sphere.sphs_c,all_potential,llmax,1,1,icon);
 
+       // note M[0] and M[1] were computed already in calculate_potential_final() above
+       // for me_loc[3] at the surface
+      if  (E->ve_data_cont.polar_wander && icon == 1)
+          polar_wander_effects_comp(E,all_potential,icon);
 
-    // convert CM coordinates to spherical (r0,t0,f0):
-    xy_mag = sqrt( cm[0]*cm[0] + cm[1]*cm[1] );
-    r0 = sqrt( cm[2]*cm[2] + xy_mag*xy_mag );
-    if (r0) {
-      t0 = acos( cm[2]/r0 );
-      f0 = acos( cm[0]/xy_mag );
-      if ( cm[1]<0 ) f0 = 2.0*M_PI - f0 ;
-    }
-    else t0 = f0 = 0.0 ;
+     }    // end if !Only_Correct_CM
 
+//    Part III. This part functions to correct CM motion. (for Only_Correct_CM)
+//      This part corrects the all_stress to account for the effect of CM.
+//      Having it here is not ideal, but is convienent for now. 
+//      The reason is it requires the potential to be calculated.
 
-    // apply additional loads to all_stress
-    for (m=1;m<=E->sphere.caps_per_proc;m++)
-    for (i=1;i<=E->lmesh.noz;i++) {
-      density_jump = 0.0;
-      if (i==1){ // at the cmb
-        //for (j=1;j<=vpts;j++)
-        if(E->parallel.me_loc[3]==0)
-          density_jump +=  E->data.density_below/E->data.density-E->erho[E->mesh.levmax][m][i];
-        else
-          density_jump = 1. -E->erho[E->mesh.levmax][m][i];
-      }
-      else if (i==E->lmesh.noz){ // at the surface
-        //for (j=1;j<=vpts;j++)
-        if(E->parallel.me_loc[3]== E->parallel.nprocz-1)
-          density_jump += E->erho[E->mesh.levmax][m][i-1];
-        else
-          density_jump += E->erho[E->mesh.levmax][m][i-1] -1.0;
-      }
-      else
-        density_jump += E->erho[E->mesh.levmax][m][i-1] - E->erho[E->mesh.levmax][m][i];
-
-      for (k=1;k<=E->lmesh.nsf;k++) {
-        node = (k-1)*E->lmesh.noz+i;
-        t1 = E->SX[E->mesh.levmax][m][1][node];
-        f1 = E->SX[E->mesh.levmax][m][2][node];
-        rel_cos = -1.0 * (cos(t1)*cos(t0) + sin(t1)*sin(t0)*cos(f0-f1)) ;
-        E->Xsurf[1][m][k] = density_jump*r0*rel_cos;
-        /*		  E->all_stress[m][node] += density_jump*r0*rel_cos;
-            E->Xsurf[1][m][k] = E->all_stress[m][node];*/
-      }
-      if (i!=1)
-        remove_average(E,E->Xsurf[1],1);
-      else
-        remove_average(E,E->Xsurf[1],0);
-    
-      for (k=1;k<=E->lmesh.nsf;k++) {
-        node = (k-1)*E->lmesh.noz+i;
-        E->slice_ve.all_stress[m][node] += E->Xsurf[1][m][k];
-            
-      // remove below line by tao: dont need this because I will do it later when call calculate_potential_comp to calculate potential
-      //			E->Xsurf[1][m][k] = E->slice_ve.all_stress[m][node];
-      }
-    } // end of (i=1;i<=E->lmesh.noz;i++) loop 
-  } // end if Only_Correct_CM
+  if (Only_Correct_CM)  { 
+      center_mass_effects_comp(E,all_potential,add_incr_CM);
+   }
 
   return;
 }
-
-////<<<< end tao: only calculate the phi, the CM effect should be corrected before separately
-///*
-//void calculate_potential_comp_Geruo(E,all_potential,load_only,add_incr_CM)
-//    struct All_variables *E;
-//    higher_precision **all_potential;
-//    int load_only,add_incr_CM;
-///* I probably should add an option for apply_new_loads, if we can simply process degree-1 motion from the degree-1 potential terms.
-//   Since in that way, when it is called in apply_new loads, we will only have a surface load as the input for calculate_potential,
-//   and the degree-1 motion can be determined after we obtain the potential. */
-//{
-//    int ib,is,m,ll,ll1,ll2,mm,p,i,j,k,n,node,el,a,m1;
-//    double con,r,t,f,rir,ri,ro,modified_plgndr_a(),ra,phi_lm_cs, phi_lm_sn,div_u[4][9][9];
-//    double div_u_gp[9], cs_gp[9], sn_gp[9], rtf[4][9], sinaa[9], ct[9];
-//    static double Earth_mass;
-//    static double *rho_div_u_gp[NCS], *r_gp[NCS], *t_gp[NCS], *f_gp[NCS], *ylm_cs[NCS][100][100], *ylm_sn[NCS][100][100],*rho_div_u[NCS];
-//    double density_surf,density_cmb,density_jump;
-//    double tmp,v_cs,v_sn,v_total_cs,v_total_sn,dlayer,temp,cm[3],r0,t0,f0,xy_mag,t1,f1,rel_cos;
-//    double M[3],centri_pot;
-//
-//    static int been=0;
-//    static double M_conv, C_conv, omega;
-//    void  raw_sphere_expansion();
-//    void  polar_wander_effects();
-//    void  exchange_sphcs();
-//    void construct_c3x3matrix_el();
-//    void get_rtf();
-//    void visc_from_gint_to_nodes();
-//    void remove_average();
-//
-//    static struct CC Cc;
-//    static struct CCX Ccx;
-//    float *gnxx,*gnda;
-//
-//
-//    const int dims=E->mesh.nsd,dofs=E->mesh.dof;
-//    const int vpts=vpoints[E->mesh.nsd];
-//    const int ends=enodes[E->mesh.nsd];
-//
-//   if (been == 0 ) { 
-//    for(m=1;m<=E->sphere.caps_per_proc;m++){
-//    rho_div_u[m] = (double *) malloc((E->lmesh.nno+2)*vpoints[E->mesh.nsd]*sizeof(double));
-///*    rho_div_u_gp[m] = (double *) malloc((E->lmesh.nel+2)*vpoints[E->mesh.nsd]*sizeof(double));
-//    r_gp[m]         = (double *) malloc((E->lmesh.nel+2)*vpoints[E->mesh.nsd]*sizeof(double));
-//    t_gp[m]         = (double *) malloc((E->lmesh.nel+2)*vpoints[E->mesh.nsd]*sizeof(double));
-//    f_gp[m]         = (double *) malloc((E->lmesh.nel+2)*vpoints[E->mesh.nsd]*sizeof(double));
-//
-//    for (ll=1;ll<=E->sphere.output_llmax;ll++)
-//    for (mm=0;mm<=ll;mm++) {
-//      ylm_cs[m][ll][mm] = (double *) malloc((E->lmesh.nel+2)*vpoints[E->mesh.nsd]*sizeof(double));
-//      ylm_sn[m][ll][mm] = (double *) malloc((E->lmesh.nel+2)*vpoints[E->mesh.nsd]*sizeof(double));
-//    }*/
-//    }
-//
-//    omega = 2.0*M_PI/(24.0*3600.0);  // rotation_rate
-//    M_conv = (3.0*E->data.grav_const*E->data.density)/(omega*omega*E->control.kf)*5.0*sqrt(4.0*M_PI/15.0); // 3G*rho/(w^2*kf)*5sqrt(4pi/15)
-//          // convert non-dim phi into non-dim M
-//    C_conv = -omega*omega/(4.0*M_PI*E->data.grav_const*E->data.density);
-//          // convert non-dim r^2(m1*cosf+m2*sinf)*sintcost into non-dim centrifugal potential, which can be added into the potential terms;
-//          // to dimensionalize the potential, multiply by 4*pi*G*rho*R^2.
-//
-//    been++;
-//    }
-//    for (i=0;i<3;i++) cm[i] = 0.0;
-//    // compute Earth's mass
-//    if (add_incr_CM != 0 || been==1){
-//      Earth_mass = 0.0;
-//      tmp = 0.0;
-//
-//      for (m=1;m<=E->sphere.caps_per_proc;m++)
-//        for (el=1;el<=E->lmesh.nel;el++) {
-//          for (j=1;j<=vpts;j++) {
-//            gnda = E->gDA[m][el].vpt;
-//            tmp += E->erho[E->mesh.levmax][m][(el-1)*vpts+j]*gnda[j]*g_point[j].weight[dims-1];
-//          } // end j loop
-//        } // end el loop          
-//      MPI_Allreduce(&tmp,&Earth_mass,1,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD);
-//      Earth_mass += 4./3.*M_PI*E->data.density_below/E->data.density*pow(E->sphere.ri,3);
-//    }
-//    
-//
-//    for (m=1;m<=E->sphere.caps_per_proc;m++) {
-//      for (i=1;i<=E->lmesh.nno;i++) {
-//        all_potential[m][i] = 0.0;
-//      }
-//    }
-//
-//
-//    // Ylm expansion of the mass perturbation at each boundary - do the Ylm expansion of all_stress:
-//    for (i=1;i<=E->lmesh.noz;i++) {
-//      // save the ith layer into E->Xsurf[1]
-//      for (m=1;m<=E->sphere.caps_per_proc;m++) {
-//        for (j=1;j<=E->lmesh.nsf;j++) {
-//          node = (j-1)*E->lmesh.noz+i;
-//          E->Xsurf[1][m][j] = E->all_stress[m][node];
-//        }
-//      }
-//      // if I wasn't mistaken, it will produce identical results for ic=1 or 0
-///*      if (i!=1)
-//        raw_sphere_expansion(E,1,E->Xsurf[1],
-//                             E->sphere.sc[i],E->sphere.ss[i]);
-//      else*/
-//        raw_sphere_expansion(E,0,E->Xsurf[1],
-//                             E->sphere.sc[i],E->sphere.ss[i]);
-//
-//    }
-//
-//    // compute rho*div_u*dV at each gaussian points
-//    if (!load_only){
-//          for (m=1;m<=E->sphere.caps_per_proc;m++)
-//            for(i=1;i<=E->lmesh.nno;i++)
-//              rho_div_u[m][i] = 0.0;
-//
-//          for (m=1;m<=E->sphere.caps_per_proc;m++)
-//          for (el=1;el<=E->lmesh.nel;el++) {
-//            gnxx = E->gNX[m][el].vpt;
-//            gnda = E->gDA[m][el].vpt;
-//            get_rtf(E,el,0,rtf,E->mesh.levmax,m); // get r,t,f at gaussian points
-//            if ((el-1)%E->lmesh.elz==0) {
-//              construct_c3x3matrix_el(E,el,&Cc,&Ccx,E->mesh.levmax,m,0);
-//            }
-//            temp = 0.;
-//            for (j=1;j<=vpts;j++) {
-//              // compute div_u at gaussian points
-//              sinaa[j] = sin(rtf[1][j]);
-//              ct[j] = cos(rtf[1][j])/sinaa[j];
-//              div_u_gp[j] = 0.0;
-//              for (a=1;a<=ends;a++) {
-//                node = E->ien[m][el].node[a];
-//                for (k=1;k<=dims;k++) {
-//                  div_u[k][a][j] = rtf[3][j]*
-//                           (gnxx[GNVXINDEX(0,a,j)]*Cc.vpt[BVINDEX(1,k,a,j)]
-//                           +E->N.vpt[GNVINDEX(a,j)]*Ccx.vpt[BVXINDEX(1,k,1,a,j)]
-//                           +E->N.vpt[GNVINDEX(a,j)]*Cc.vpt[BVINDEX(3,k,a,j)])
-//                                  +rtf[3][j]*
-//                           (E->N.vpt[GNVINDEX(a,j)]*Cc.vpt[BVINDEX(1,k,a,j)]*ct[j]
-//                           +E->N.vpt[GNVINDEX(a,j)]*Cc.vpt[BVINDEX(3,k,a,j)]
-//                           +(gnxx[GNVXINDEX(1,a,j)]*Cc.vpt[BVINDEX(2,k,a,j)]
-//                           +E->N.vpt[GNVINDEX(a,j)]*Ccx.vpt[BVXINDEX(2,k,2,a,j)])/sinaa[j])
-//                                  +gnxx[GNVXINDEX(2,a,j)]*Cc.vpt[BVINDEX(3,k,a,j)];
-//                  div_u_gp[j] +=div_u[k][a][j]*E->U[m][E->id[m][node].doff[k]];
-//                }  
-//              }
-//
-//              temp += div_u_gp[j]*E->erho[E->mesh.levmax][m][(el-1)*vpts+j];
-//
-///*              rho_div_u_gp[m][(el-1)*vpts+j] = div_u_gp[j]
-//                                           *E->erho[E->mesh.levmax][m][(el-1)*vpts+j]*gnda[j]*g_point[j].weight[dims-1];
-//                                           // rho*div_u*dV
-//              t_gp[m][(el-1)*vpts+j] = rtf[1][j];
-//              f_gp[m][(el-1)*vpts+j] = rtf[2][j];
-//              r_gp[m][(el-1)*vpts+j] = 1./rtf[3][j]; */
-//            } // end j loop
-//            temp = temp/vpts;
-//            for(j=1;j<=ends;j++)                {
-//              node = E->ien[m][el].node[j];
-//              rho_div_u[m][node] += E->TWW[E->mesh.levmax][m][el].node[j]*temp;
-//            }
-//
-//          } // end el loop
-//
-///*          // compute Ylm at the guassian points
-//          for (m=1;m<=E->sphere.caps_per_proc;m++){
-//          for (ll=1;ll<=E->sphere.output_llmax;ll++)
-//          for (mm=0;mm<=ll;mm++) {
-//            for (el=1;el<=E->lmesh.nel;el++){
-//              for (j=1;j<=vpts;j++){
-//                ylm_cs[m][ll][mm][(el-1)*vpts+j] = cos(mm*f_gp[m][(el-1)*vpts+j])*modified_plgndr_a(ll,mm,t_gp[m][(el-1)*vpts+j]);
-//                ylm_sn[m][ll][mm][(el-1)*vpts+j] = sin(mm*f_gp[m][(el-1)*vpts+j])*modified_plgndr_a(ll,mm,t_gp[m][(el-1)*vpts+j]);
-//              }
-//            }
-//          }
-//          }*/
-//
-//          exchange_node_d (E,rho_div_u,E->mesh.levmax);
-//
-//
-//      for (i=1;i<E->lmesh.noz;i++) {
-//        // save the ith layer into E->Xsurf[1]
-//        for (m=1;m<=E->sphere.caps_per_proc;m++) {
-//          for (j=1;j<=E->lmesh.nsf;j++) {
-//            node = (j-1)*E->lmesh.noz+i;
-//            E->Xsurf[1][m][j] = (rho_div_u[m][node]+rho_div_u[m][node+1])/2.0;
-//          }
-//        }
-//       raw_sphere_expansion(E,0,E->Xsurf[1],E->sphere.sc_v[i],E->sphere.ss_v[i]);
-//      }  
-//    }
-//
-//    // if >1 cap in z-direction (probably not), additional change is needed
-//
-//    // compute deg-1 motion from ll=1 and i=E->lmesh.noz, and then update all_stress
-//    ll=1;
-//    for (mm=0;mm<=ll;mm++){
-//      p = E->sphere.hindex[ll][mm];
-//      for(m=1;m<=E->sphere.caps_per_proc;m++){
-//        i=E->lmesh.noz;
-//        phi_lm_cs = 0.0;
-//        phi_lm_sn = 0.0;
-//        r = E->SX[E->mesh.levmax][3][m][i];
-//        for (k=1;k<=i;k++) {
-//          ri = E->SX[E->mesh.levmax][3][m][k]; // the smaller radius
-//          ro = r;                              // the larger radius
-//          tmp = ri*pow(ri/ro,(double)(ll+1))/(2.0*ll+1.0);
-//          phi_lm_cs += tmp*E->sphere.sc[k][p];
-//          phi_lm_sn += tmp*E->sphere.ss[k][p];
-//        }
-//        if (!load_only){
-//          for(k=1;k<i;k++) {
-//              ri = (E->SX[E->mesh.levmax][3][m][k] + E->SX[E->mesh.levmax][3][m][k+1])/2.0;
-//              ro = r;
-//              dlayer = E->SX[E->mesh.levmax][3][m][k+1] - E->SX[E->mesh.levmax][3][m][k];
-//              tmp = ri*pow(ri/ro,(double)(ll+1))/(2.0*ll+1.0);
-//              phi_lm_cs -= tmp*E->sphere.sc_v[k][p]*dlayer;
-//              phi_lm_sn -= tmp*E->sphere.ss_v[k][p]*dlayer;
-//          }
-//        }
-//        if (mm==1) {
-//          cm[0] = -phi_lm_cs*sqrt(12.*M_PI)/Earth_mass*pow(E->SX[E->mesh.levmax][3][m][i],2);
-//          cm[1] = -phi_lm_sn*sqrt(12.*M_PI)/Earth_mass*pow(E->SX[E->mesh.levmax][3][m][i],2);
-//        }
-//        else {
-//          cm[2] = phi_lm_cs*sqrt(12.*M_PI)/Earth_mass;
-////          fprintf(stderr,"m = 0: phi_cs = %g, phi_sn = %g\n",phi_lm_cs, phi_lm_sn);
-//        }
-//      }
-//    }
-////    fprintf(stderr,"cm[0] = %g, cm[1] = %g, cm[2] = %g \n", cm[0],cm[1],cm[2]);
-////    fprintf(stderr,"m = 1: phi_cs = %g, phi_sn = %g\n",phi_lm_cs,phi_lm_sn);
-//
-//    if (add_incr_CM == 1)
-//      for (j=0;j<3;j++) E->data.CM_incr[j] = cm[j];
-//    else if (add_incr_CM == 2)
-//      for (j=0;j<3;j++) E->data.CM_incr[j] += cm[j];
-//
-//    if (1){
-//    // convert CM coordinates to spherical (r0,t0,f0):
-//    xy_mag = sqrt( cm[0]*cm[0] + cm[1]*cm[1] );
-//    r0 = sqrt( cm[2]*cm[2] + xy_mag*xy_mag );
-//    if (r0) {
-//        t0 = acos( cm[2]/r0 );
-//        f0 = acos( cm[0]/xy_mag );
-//        if ( cm[1]<0 ) f0 = 2.0*M_PI - f0 ;
-//    }
-//    else t0 = f0 = 0.0 ;
-////    fprintf(stderr,"t,f,r = %f, %f, %f \n",t0*180./M_PI,f0*180./M_PI,r0);
-//
-//    // apply additional loads to all_stress
-//    for (m=1;m<=E->sphere.caps_per_proc;m++)
-//    for (i=1;i<=E->lmesh.noz;i++) {
-//      density_jump = 0.0;
-//      if (i==1) // at the cmb
-//        for (j=1;j<=vpts;j++)
-//          density_jump +=  E->data.density_below/E->data.density-E->erho[E->mesh.levmax][m][(i-1)*vpts+j];
-//      else if (i==E->lmesh.noz) // at the surface
-//        for (j=1;j<=vpts;j++)
-//          density_jump += E->erho[E->mesh.levmax][m][(i-2)*vpts+j];
-//      else
-//        for (j=1;j<=vpts;j++)
-//          density_jump += E->erho[E->mesh.levmax][m][(i-2)*vpts+j] - E->erho[E->mesh.levmax][m][(i-1)*vpts+j];
-//      density_jump = density_jump/vpts;
-// //     if (i==1) density_jump += E->data.density_below/E->data.density;
-//
-//      for (k=1;k<=E->lmesh.nsf;k++) {
-//        node = (k-1)*E->lmesh.noz+i;
-//        t1 = E->SX[E->mesh.levmax][1][m][node];
-//        f1 = E->SX[E->mesh.levmax][2][m][node];
-//        rel_cos = -1.0 * (cos(t1)*cos(t0) + sin(t1)*sin(t0)*cos(f0-f1)) ;
-//        E->Xsurf[1][m][k] = density_jump*r0*rel_cos;
-///*        E->all_stress[m][node] += density_jump*r0*rel_cos;
-//        E->Xsurf[1][m][k] = E->all_stress[m][node];*/
-//      }
-//      if (i!=1)
-//        remove_average(E,E->Xsurf[1],1);
-//      else
-//        remove_average(E,E->Xsurf[1],0);
-//
-//      for (k=1;k<=E->lmesh.nsf;k++) {
-//        node = (k-1)*E->lmesh.noz+i;
-//        E->all_stress[m][node] += E->Xsurf[1][m][k];
-//        E->Xsurf[1][m][k] = E->all_stress[m][node];
-//      }
-///*      if (i!=1)
-//        raw_sphere_expansion(E,1,E->Xsurf[1],E->sphere.sc[i],E->sphere.ss[i]);
-//      else*/
-//        raw_sphere_expansion(E,0,E->Xsurf[1],E->sphere.sc[i],E->sphere.ss[i]);
-//
-//    }
-//    }
-//
-//    // calculate potential
-////    for (ll=1;ll<=10;ll++) //VEdeg10.mpi
-//    for (ll=1;ll<=E->sphere.output_llmax;ll++) // degree 0 term is supposed to be zero at surface, but here we are excluding it for each layer
-//    for (mm=0;mm<=ll;mm++) {
-//      p = E->sphere.hindex[ll][mm];
-//      for (m=1;m<=E->sphere.caps_per_proc;m++) {
-//        for (i=1;i<=E->lmesh.noz;i++) {
-//          // compute phi_lm(r)
-//          phi_lm_cs = 0.0;
-//          phi_lm_sn = 0.0;
-//          v_cs      = 0.0;
-//          v_sn      = 0.0;
-//          r = E->SX[E->mesh.levmax][3][m][i];
-//          // 1. the boundary terms
-//          for (k=1;k<=i;k++) {
-//            ri = E->SX[E->mesh.levmax][3][m][k]; // the smaller radius
-//            ro = r;                              // the larger radius
-//            tmp = ri*pow(ri/ro,(double)(ll+1))/(2.0*ll+1.0);
-//            phi_lm_cs += tmp*E->sphere.sc[k][p];
-//            phi_lm_sn += tmp*E->sphere.ss[k][p];
-//          }
-//          if (i<E->lmesh.noz) {
-//            for (k=i+1;k<=E->lmesh.noz;k++) {
-//              ri = r;
-//              ro = E->SX[E->mesh.levmax][3][m][k];
-//              tmp = ri*pow(ri/ro,(double)(ll-1))/(2.0*ll+1.0);
-//              phi_lm_cs += tmp*E->sphere.sc[k][p];
-//              phi_lm_sn += tmp*E->sphere.ss[k][p];
-//            }
-//          }
-//          // 2. the volumn integral term
-//          if (!load_only) {
-///* my old way to do this, it is extremely slow !!*/
-///*          for (m1=1;m1<=E->sphere.caps_per_proc;m1++)
-//          for (el=1;el<=E->lmesh.nel;el++) {
-//            for (j=1;j<=vpts;j++) {
-//              // compute (r<)^l/(r>)^(l+1) * Ylm  at gaussian points
-//              if ( r_gp[m1][(el-1)*vpts+j] <= r) {
-//                ri = r_gp[m1][(el-1)*vpts+j];
-//                ro = r;
-//              }
-//              else {
-//                ri = r;
-//                ro = r_gp[m1][(el-1)*vpts+j];
-//              }
-//              tmp = pow(ri/ro,(double)(ll))/ro/(2.0*ll+1.0);
-//              cs_gp[j] = tmp*ylm_cs[m1][ll][mm][(el-1)*vpts+j];
-//              sn_gp[j] = tmp*ylm_sn[m1][ll][mm][(el-1)*vpts+j];
-//              // multiply by div_u at gaussian points              
-//              v_cs -= cs_gp[j]*rho_div_u_gp[m1][(el-1)*vpts+j];
-//              v_sn -= sn_gp[j]*rho_div_u_gp[m1][(el-1)*vpts+j];            
-//            } // end j loop
-//          } // end el loop          
-//
-//          MPI_Allreduce(&v_cs,&v_total_cs,1,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD);
-//          MPI_Allreduce(&v_sn,&v_total_sn,1,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD);
-//          phi_lm_cs += v_total_cs;
-//          phi_lm_sn += v_total_sn;*/
-//
-//          if (i>1)
-//            for(k=1;k<i;k++) {
-//              ri = (E->SX[E->mesh.levmax][3][m][k] + E->SX[E->mesh.levmax][3][m][k+1])/2.0;
-//              ro = r;
-//              dlayer = E->SX[E->mesh.levmax][3][m][k+1] - E->SX[E->mesh.levmax][3][m][k];
-//              tmp = ri*pow(ri/ro,(double)(ll+1))/(2.0*ll+1.0);
-//              phi_lm_cs -= tmp*E->sphere.sc_v[k][p]*dlayer;
-//              phi_lm_sn -= tmp*E->sphere.ss_v[k][p]*dlayer;
-//            }
-//          if (i<E->lmesh.noz)
-//            for(k=i;k<E->lmesh.noz;k++) {
-//              ri = r;
-//              ro = (E->SX[E->mesh.levmax][3][m][k] + E->SX[E->mesh.levmax][3][m][k+1])/2.0;
-//              dlayer = E->SX[E->mesh.levmax][3][m][k+1] - E->SX[E->mesh.levmax][3][m][k];
-//              tmp = ri*pow(ri/ro,(double)(ll-1))/(2.0*ll+1.0);
-//              phi_lm_cs -= tmp*E->sphere.sc_v[k][p]*dlayer;
-//              phi_lm_sn -= tmp*E->sphere.ss_v[k][p]*dlayer;
-//            }
-//          }
-//          // compute the change in rotation axis: m0, m1
-//          if (E->control.polar_wander && i==E->lmesh.noz && ll==2 && mm==1){
-//            M[0] = M_conv * phi_lm_cs * pow(E->SX[E->mesh.levmax][3][m][i],3.0);
-//            M[1] = M_conv * phi_lm_sn * pow(E->SX[E->mesh.levmax][3][m][i],3.0);
-//            E->data.rot[0] = M[0];
-//            E->data.rot[1] = M[1];
-//          }
-//          // check the net mass increase
-//          if (ll==0 && i==E->lmesh.noz){
-//            tmp = phi_lm_cs*2*E->SX[E->mesh.levmax][3][m][i]*sqrt(M_PI);
-////            fprintf(stderr,"@@ earth_mass = %g, incr mass = %g, ratio = %g \n",Earth_mass, tmp, tmp/Earth_mass);
-//          }
-//
-//          // sum over ll, mm for each nodes within the ith layer
-//          for (j=1;j<=E->lmesh.nsf;j++) {
-//            node = (j-1)*E->lmesh.noz+i;
-//            all_potential[m][node] += (phi_lm_cs*E->Tbl_cs[m][mm][j] + phi_lm_sn*E->Tbl_sn[m][mm][j])
-//                                         *E->Tbl_lm[m][p][j];          
-//          }
-//        } // end the ith layer loop
-//      }
-//    }
-//    
-//
-//    // alter the Y_21 potential, if polar_wander is on:
-//    if (E->control.polar_wander){
-//      // compute: -r^2*omega^2*sin(t)*cos(t)*[M[0]cos(f) + M[1]sin(f)]
-//      for(m=1;m<=E->sphere.caps_per_proc;m++)
-//      for(node=1;node<=E->lmesh.nno;node++){
-//        t = E->SX[E->mesh.levmax][1][m][node];
-//        f = E->SX[E->mesh.levmax][2][m][node];
-//        r = E->SX[E->mesh.levmax][3][m][node];
-//        centri_pot = r*r*sin(t)*cos(t)*(M[0]*cos(f)+M[1]*sin(f))*C_conv;
-//        all_potential[m][node] += centri_pot;
-//      }
-//    }
-//
-//    return;
-//}
-//
-//*/
 
 void calculate_potential_deg1_2(E,X_surf,X_cmb)
     struct All_variables *E;
@@ -2026,7 +1201,7 @@ void calculate_potential_deg1_2(E,X_surf,X_cmb)
             // scale nondim stress -> nondim height of rock
             E->Xsurf[1][m][j] = X_surf[m][j]/E->ve_data_cont.surf_scaling;
         }
-        sphere_expansion_VE(E,1,E->Xsurf[1],
+        sphere_expansion_VE(E,E->Xsurf[1],
                              E->sphere.sphc[0],E->sphere.sphs[0],llmax);
         for (ll=0;ll<=llmax;ll++)
         for (mm=0;mm<=ll;mm++)   {
@@ -2043,7 +1218,7 @@ void calculate_potential_deg1_2(E,X_surf,X_cmb)
             // scale nondim stress -> nondim height of cmb boundary
             E->Xsurf[2][m][j] = X_cmb[m][j]/E->ve_data_cont.botm_scaling;
         }
-        sphere_expansion_VE(E,0,E->Xsurf[2],
+        sphere_expansion_VE(E,E->Xsurf[2],
                              E->sphere.sphc[1],E->sphere.sphs[1],llmax);
         for (ll=0;ll<=llmax;ll++)
         for (mm=0;mm<=ll;mm++)   {
@@ -2090,81 +1265,103 @@ void get_potential(struct All_variables *E, int count)
  //   int count;
 {
     int ib,is,m,ll,ll1,ll2,mm,p,i,j,k,n;
-    void calculate_potential();
+    void calculate_potential_incomp();
     void calculate_potential_comp();
+    void get_potential_from_3D_rho();
     void parallel_process_termination();
     double total_surface_integral();
+    static int been_here=0;
 
 /*    double temp1,*TG[4];
 
   for (m=1;m<=E->sphere.caps_per_proc;m++)
     TG[m] = (double *)malloc((E->lmesh.nsf+1)*sizeof(double));
 */
+
+    if (E->control.CONVECTION) {  // compute potential from internal loads
+				 
+       if (count==0 && been_here==0) {  // only computed once
+          get_potential_from_3D_rho(E,E->buoyancy,E->slice_ve.potential_int_loads,E->ve_data_cont.compressible);  
+	   // potential_int_loads is the potential caused by mantle buoyancy.  
+	   //
+	  if (E->ve_data_cont.compressible)  {
+	    for (m=1;m<=E->sphere.caps_per_proc;m++)
+              for (n=1;n<=E->lmesh.nno;n++)   {
+		E->slice_ve.init_total_potential[m][n] += E->slice_ve.potential_int_loads[m][n];
+	      }
+	  }
+	  else {  // incompressible
+	    for (m=1;m<=E->sphere.caps_per_proc;m++)
+              for (j=1;j<=E->lmesh.nsf;j++)   {
+		n = j*E->lmesh.noz;
+		k = n-E->lmesh.noz+1;
+               	E->init_potential[1][m][j] += E->slice_ve.potential_int_loads[m][k];
+               	E->init_potential[0][m][j] += E->slice_ve.potential_int_loads[m][n];
+            	}
+	  }
+
+	  been_here=1;
+       }
+
+    }
+
     if (count==0)   {  // => first (perhaps only) visit here for this timestep
             // We are performing self-grav iteration. So initialize E->potential
             // with the potential at the beginning of the timestep.
 
 			//>>>> modify by tao:
-            if (E->ve_data_cont.compressible)
-				{
-					for(m=1;m<=E->sphere.caps_per_proc;m++)
-						for (i=1; i<=E->lmesh.nno; ++i)
-						{
-							E->slice_ve.all_potential[m][i] = 0.0;
-							E->slice_ve.total_potential[m][i] = E->slice_ve.init_total_potential[m][i];
-						}
+            if (E->ve_data_cont.compressible)  {
+		for(m=1;m<=E->sphere.caps_per_proc;m++)
+			for (i=1; i<=E->lmesh.nno; ++i) {
+				E->slice_ve.all_potential[m][i] = 0.0;
+				E->slice_ve.total_potential[m][i] = E->slice_ve.init_total_potential[m][i];
+				}
             	}
-			else
-				{
-				for (m=1;m<=E->sphere.caps_per_proc;m++)
+	    else  {
+		for (m=1;m<=E->sphere.caps_per_proc;m++)
             		for (j=1;j<=E->lmesh.nsf;j++)   {
                 	E->potential[1][m][j] = E->init_potential[1][m][j];
                 	E->potential[0][m][j] = E->init_potential[0][m][j];
             		}
-				}			
+		}			
 			//<<<< end tao
-
-    }
+         }
 
     else  {   // second time or later in self-grav iteration
-
 		//>>>> add by tao:
-		if (E->ve_data_cont.compressible)
-			{
-				calculate_potential_comp(E, E->slice_ve.all_potential,0); 
+	if (E->ve_data_cont.compressible)  {
+		calculate_potential_comp(E, E->slice_ve.all_potential,0); 
 
-				for(m=1;m<=E->sphere.caps_per_proc;m++)
-			  	for (i =1; i <=E->lmesh.nno; ++i)
-				  {
-					  E->slice_ve.total_potential[m][i] = E->slice_ve.init_total_potential[m][i]
-					  				+ E->slice_ve.all_potential[m][i];
+		for(m=1;m<=E->sphere.caps_per_proc;m++)
+		  	for (i =1; i <=E->lmesh.nno; ++i) {
+			  E->slice_ve.total_potential[m][i] = E->slice_ve.init_total_potential[m][i]
+					+ E->slice_ve.all_potential[m][i];
 				  }
-
 			}		
 		//<<<< end tao
 		
-		else  // comment by tao: here is original incompressible version.
-			{
-		        // calculate E->incr_potential[0/1] from E->slice.surf/botm[2]:
-		        calculate_potential( E, E->slice_ve.surf[2], E->slice_ve.botm[2], 
-		                             E->incr_potential[0], E->incr_potential[1], 1);
+       else  { // comment by tao: here is original incompressible version.
+	 // calculate E->incr_potential[0/1] from E->slice.surf/botm[2]:
+	      calculate_potential_incomp( E, E->slice_ve.surf[2], E->slice_ve.botm[2], 
+	                       E->incr_potential[0], E->incr_potential[1], 1);
 
-		        for (m=1;m<=E->sphere.caps_per_proc;m++)
-		        for (j=1;j<=E->lmesh.nsf;j++)   {
+	      for (m=1;m<=E->sphere.caps_per_proc;m++)
+	        for (j=1;j<=E->lmesh.nsf;j++)   {
 		            E->potential[1][m][j] =  E->init_potential[1][m][j] 
 		                                   + E->incr_potential[1][m][j];  // cmb
 		            E->potential[0][m][j] =  E->init_potential[0][m][j] 
 		                                   + E->incr_potential[0][m][j];  // surface
-		        }
-			}
+	        }
+	}
     }
 
-	if(E->ve_data_cont.compressible){
+if(E->ve_data_cont.compressible){
 		    // save the surface potential as in the original version; used in dynamic ocean calculation.
 		    for (m=1;m<=E->sphere.caps_per_proc;m++)
 		      for (j=1;j<=E->lmesh.nsf;j++)   {
 		        E->potential[0][m][j] = E->slice_ve.total_potential[m][j*E->lmesh.noz];
 		      }
+
 		}
 
 /*
@@ -2382,58 +1579,14 @@ void add_restoring_comp(struct All_variables *E, int lev, int m, double **Au, do
     struct Shape_function1_dA dGammax;
     static int been=0;
 
-
-/*    if (E->parallel.me_loc[3]==E->parallel.nprocz-1)  {
-
-
-        for (e=1;e<=E->lmesh.SNEL[lev];e++)   {
-            el=e*E->lmesh.ELZ[lev];
-            for(k=1;k<=onedp;k++)   {
-                nn[k] = E->ID[lev][m][E->IEN[lev][m][el].node[k+onedp]].doff[3];
-                force[k] = E->data.surf_scaling*u[m][nn[k]];
-            }
-
-            for (i=1;i<=onedp;i++)   {
-                force_at_gs[i] = 0.0;
-                for(k=1;k<=onedp;k++)
-                    force_at_gs[i] += force[k] * E->M.vpt[GMVINDEX(k,i)];
-            }
-
-            for (k=1;k<=onedp;k++)
-            for (i=1;i<=onedp;i++)
-                Au[m][nn[k]] += E->B_R[lev][m][k+onedp][(e-1)*onedp+i] * force_at_gs[i];
-          }
-
-        }
-    }
-*/
-/* change start - add the restoring force at each density discontinuity */
-
     stress_scaling = E->data.density*E->data.grav_acc*E->sphere.dradius/E->ve_data_cont.shear_mod;
 
-    if (1) { /* I probably need to add an option to identify the proc_loc */
+    // fprintf(E->fp_out,"kkkk density\n");
         for (e=1;e<=E->lmesh.SNEL[lev];e++)  {
           for (j=1;j<=E->lmesh.ELZ[lev];j++) {
             el = (e-1)*E->lmesh.ELZ[lev] + j;
-
-            /* find the delta-rho */
-            density_jump = 0.0;
-            if (j == E->lmesh.ELZ[lev]) { /* at the surface */
-//              for (n=1;n<=vpts;n++)
-				if(E->parallel.me_loc[3]==E->parallel.nprocz-1)
-                	density_jump += E->erho[lev][m][el];
-				else
-					density_jump += E->erho[lev][m][el] -1.0;
-//              density_jump = density_jump/vpts;
-            }
-            else {
- //             for (n=1;n<=vpts;n++)
-                density_jump = density_jump + E->erho[lev][m][el] - E->erho[lev][m][el+1];
- //             density_jump = density_jump/vpts;
-            }
-
-//            if (e==10 && E->parallel.me==10 && been==0) fprintf(stderr,"%d  %.8e\n",j+1,density_jump*E->data.density);
-
+            i = E->lmesh.NZS[lev] + j -1;
+	    density_jump = E->rho_jump1D[lev][i+1];  // at the top of each element
 
             /* find the forces acting on the top nodes of the specific element */
             for (k=1;k<=onedp;k++) {
@@ -2443,6 +1596,8 @@ void add_restoring_comp(struct All_variables *E, int lev, int m, double **Au, do
               force[k] = density_jump*grav*u[m][nn[k]]*stress_scaling;
             }
 
+//	               fprintf(E->fp_out,"%d %d %g\n",j,el,density_jump*E->data.density);
+
             /* find the forces at each gaussian point */
             for (i=1;i<=onedp;i++)   {
                 force_at_gs[i] = 0.0;
@@ -2450,61 +1605,38 @@ void add_restoring_comp(struct All_variables *E, int lev, int m, double **Au, do
                     force_at_gs[i] += force[k] * E->M.vpt[GMVINDEX(k,i)];
             }
 
-            /* find the 2d jacobian, I probably should write a subroutine similar to construct_B_R for this purpose
-            ic = 1;     
-            get_global_1d_shape_fn_2(E,el,&GM,&dGammax,ic,lev,m);
-            */
-
             /* add the forcing terms ( drho*g*u_r, here it only changes the nn(k) terms in Au) to the Au vector */
             for (k=1;k<=onedp;k++)
             for (i=1;i<=onedp;i++)
                   Au[m][nn[k]] += E->B_RR[lev][m][k+onedp][(el-1)*onedp+i] * force_at_gs[i];
-//                Au[m][nn[k]] += E->M.vpt[GMVINDEX(k,i)] * dGammax.vpt[GMVGAMMA(0,i)] * force_at_gs[i];
+          }  // end for j=lmesh.ELZ
+        }   // end for e=SNEL
 
-          }
-
-        }
-    }
-
-    if ( 1 /*E->parallel.me_loc[3]==0*/)  { /* we also need to consider the restoring forces at the CMB */
-
-        for (e=1;e<=E->lmesh.SNEL[lev];e++)   {
-            el=(e-1)*E->lmesh.ELZ[lev]+1;
-
-            /* find the delta-rho */
-            density_jump = 0.0;
-			if(E->parallel.me_loc[3]==0) {
-            	//for (n=1;n<=vpts;n++)
-              density_jump = density_jump + E->data.density_below/E->data.density-E->erho[lev][m][el];
-            	//density_jump = density_jump/vpts ;
-			}
-			else{
-				density_jump = 1.0 -E->erho[lev][m][el];  // this will be compensated by proc below when MPI sum.
-			}
-//            if (e==10 && E->parallel.me==10 && been==0) {fprintf(stderr,"%d  %.8e\n",1,density_jump*E->data.density);been++;}
-
-            
+	// do the same for the bottom nodes of bottom elements of bottom CPU, CMB
+    if (E->parallel.me_loc[3] ==0)  {
+      for (e=1;e<=E->lmesh.SNEL[lev];e++)   {
+	    j = 1;  //only for bottom element of each cpu
+            el=(e-1)*E->lmesh.ELZ[lev]+j;  
+            i = E->lmesh.NZS[lev] + j -1;
+	    density_jump = E->rho_jump1D[lev][i];  // at the bottom of this element
             for(k=1;k<=onedp;k++)   {
                 nn[k] = E->ID[lev][m][E->IEN[lev][m][el].node[k]].doff[3];
                 grav = E->grav[lev][m][E->IEN[lev][m][el].node[k]];
-//                force[k] = E->data.botm_scaling*u[m][nn[k]];
                 force[k] = density_jump*grav*u[m][nn[k]]*stress_scaling;
             }
 
+//	                fprintf(E->fp_out,"lll %d %d %g\n",1,el,density_jump*E->data.density);
             for (i=1;i<=onedp;i++)   {
                 force_at_gs[i] = 0.0;
                 for(k=1;k<=onedp;k++)
                     force_at_gs[i] += force[k] * E->M.vpt[GMVINDEX(k,i)];
             }
 
-
             for(k=1;k<=onedp;k++)
             for (i=1;i<=onedp;i++)
                 Au[m][nn[k]] += E->B_RR[lev][m][k][(el-1)*onedp+i] * force_at_gs[i];
-//                Au[m][nn[k]] += E->B_R[lev][m][k][(e-1)*onedp+i] * force_at_gs[i];
-
-        }
-    }
+        }    // end for e=SNEL
+      }    // end for bottom CPU
 
     return;
 }
@@ -2529,7 +1661,7 @@ void apply_new_loads(struct All_variables * E)
  //   struct All_variables *E;
 {
     int m,i,node;
-    void calculate_potential();
+    void calculate_potential_incomp();
     void calculate_potential_comp();
     double total_surface_integral();
     double temp1,temp2;
@@ -2642,33 +1774,29 @@ void apply_new_loads(struct All_variables * E)
               calculate_potential_comp(E, E->slice_ve.all_load_potential,
                                        1); /* */
             } else{                         /*comment by tao: incompressible*/
-              calculate_potential(E, E->slice_ve.surf[2], E->slice_ve.botm[2],
+              calculate_potential_incomp(E, E->slice_ve.surf[2], E->slice_ve.botm[2],
                                   E->incr_potential[2], E->incr_potential[3],
                                   1);
             }
         }
 
         // Add load's incr_potenial to init_ and pred_:
-
-	      /* comment by tao: update init_total_potential with all_potential*/
-	    if (E->ve_data_cont.compressible)
-		  {
-		  for(m=1;m<=E->sphere.caps_per_proc;m++)
-			for (i =1; i <=E->lmesh.nno; ++i)
-				{
-					E->slice_ve.init_total_potential[m][i] += E->slice_ve.all_load_potential[m][i];
-				}
-
-		  }
-	    else /* comment by tao: incompressible*/
-		  {
-			for (m=1;m<=E->sphere.caps_per_proc;m++)
-			for (i=1;i<=E->lmesh.nsf;i++)	{
+	 /* comment by tao: update init_total_potential with all_potential*/
+       if (E->ve_data_cont.compressible)  {
+//	       fprintf(E->fp_out,"ooookkkb\n");
+		for(m=1;m<=E->sphere.caps_per_proc;m++)
+		for (i =1; i <=E->lmesh.nno; ++i) {
+		   E->slice_ve.init_total_potential[m][i] += E->slice_ve.all_load_potential[m][i];
+//		   fprintf(E->fp_out,"%d %g %g\n",i,E->slice_ve.init_total_potential[m][i],E->slice_ve.all_load_potential[m][i]);
+		}
+	  }
+        else {  /* comment by tao: incompressible*/
+		for (m=1;m<=E->sphere.caps_per_proc;m++)
+		for (i=1;i<=E->lmesh.nsf;i++)	{
 				E->init_potential[0][m][i] += E->incr_potential[2][m][i];
 				E->init_potential[1][m][i] += E->incr_potential[3][m][i];
-			}
-
-		  }
+		}
+	  }
     }     // end if self-gravitation
 
     return;
@@ -2701,6 +1829,7 @@ void get_iceModel(E,iceload)
     void sphere_expansion_output();
     void parallel_process_termination();
     void read_reg_grids();
+    void read_sve_grids();
     void read_sph_harmonics();
     void remove_average();
     double total,temp1, temp2;
@@ -2747,7 +1876,9 @@ void get_iceModel(E,iceload)
         sprintf(outfile,"%s.%d",E->ve_data_cont.ice_file, ifile-1);
         if (E->ve_data_cont.read_ice_format==0) 			 
            read_reg_grids(E,outfile,E->slice_ve.ice_height_prev);
-        else if (E->ve_data_cont.read_ice_format==1)   //  Jackson form
+        else if (E->ve_data_cont.read_ice_format==1)   // on SVE grid 
+           read_sve_grids(E,outfile,E->slice_ve.ice_height_prev);
+        else if (E->ve_data_cont.read_ice_format==2)  // Jackson form
            read_sph_harmonics(E,outfile,E->slice_ve.ice_height_prev);
 
         for (m=1;m<=E->sphere.caps_per_proc;m++)
@@ -2769,7 +1900,9 @@ void get_iceModel(E,iceload)
     sprintf(outfile,"%s.%d",E->ve_data_cont.ice_file, ifile);
     if (E->ve_data_cont.read_ice_format==0) 			 
            read_reg_grids(E,outfile,E->slice_ve.ice_height_curr);
-    else if (E->ve_data_cont.read_ice_format==1)
+    else if (E->ve_data_cont.read_ice_format==1)  // on SVE grid
+           read_sve_grids(E,outfile,E->slice_ve.ice_height_curr);
+    else if (E->ve_data_cont.read_ice_format==2)  //Jackson form
            read_sph_harmonics(E,outfile,E->slice_ve.ice_height_curr);
 
     for (m=1;m<=E->sphere.caps_per_proc;m++)
@@ -3184,6 +2317,42 @@ static int been_here=0;
 
 return;
 }
+
+// read ice heights that were already assigned to SVE grid
+
+ void read_sve_grids(E,outfile,field)
+   struct All_variables *E;
+   char *outfile;
+   double **field;   
+  {
+
+char input_s[1000],filename[255];
+FILE *fp2;
+
+void  parallel_process_termination();
+int j,j1;
+double temp;
+
+ if (E->parallel.me_loc[3]==E->parallel.nprocz-1)  {
+   sprintf( filename,"%s.%d",outfile,E->parallel.me);
+   if ( (fp2=fopen(filename,"r"))==NULL)   {
+      fprintf(stderr,"ERROR(read_reg_grids)- file %s not found\n",outfile);
+      fflush(stderr);
+      parallel_process_termination();
+   }
+
+  for (j=1;j<=E->sphere.caps_per_proc;j++)
+    for (j1=1;j1<=E->lmesh.nsf;j1++)   {
+      fgets(input_s,1000,fp2);
+      sscanf(input_s,"%lf",&temp);
+      field[j][j1]=temp;
+    }
+  fclose(fp2);
+ }
+
+  return;
+  }
+
 //
 // read ice model in terms of spherical harmonics and assign ice to FE grid.
 //
@@ -3302,7 +2471,7 @@ time1=CPU_time0();
      }   // end for ll
    }    // end for j1 or surface node
 	//
-/*  fprintf(E->fp_out,"icestage %d\n",E->ve_data_cont.stage);
+  fprintf(E->fp_out,"icestage %d\n",E->ve_data_cont.stage);
   for (j=1;j<=E->sphere.caps_per_proc;j++)
     for (j1=1;j1<=E->lmesh.nsf;j1++)  { 
       fprintf(E->fp_out,"%d %.5e\n",j1,field[j][j1]);
@@ -3315,7 +2484,6 @@ if (E->parallel.me==0) {
         fprintf(E->fp,"CPU_time for ice model %g seconds\n",time2-time1);
 	fflush(E->fp);
 }
-*/
 
   return;
   }
@@ -3477,5 +2645,206 @@ double shape1,shape2,shape3,shape4;
      }
    }
 
+return;
+}
+
+// rho_3d is defined as density anomalies at each node in 3-D volume.
+// This subroutine returns the gravitational potential caused by rho_3d. 
+//
+void get_potential_from_3D_rho(struct All_variables *E, double ** rho_3d, double ** potential_intl_loads, int icompress)
+{
+    static int been=0;
+    void calculate_potential_from_3D_sigma();
+
+    static double *sigma_3d[NCS];
+
+    int el,m,n,i,j,k;
+    const int dims=E->mesh.nsd,dofs=E->mesh.dof;
+    const int vpts=vpoints[E->mesh.nsd];
+    const int ends=enodes[E->mesh.nsd];
+    const int levmax=E->mesh.levmax;
+    
+    double tmp, tmp1,dr;
+
+    static int been_here = 0;
+
+    if (been==0)  {
+        been = 1;
+        for(m=1; m<=E->sphere.caps_per_proc;m++){
+          sigma_3d[m] = (double *) malloc((E->lmesh.nno+2)*sizeof(double));
+        }
+    }
+
+    // turn rho_3d to sigma_3d or surface density also on the nodes.
+ 
+    for (m=1;m<=E->sphere.caps_per_proc;m++) {
+      for (n=1;n<=E->lmesh.nno;n++)  {
+	      i = (n-1)%E->lmesh.noz+E->lmesh.nzs;
+	      dr = (E->sphere.rr[i+1]-E->sphere.rr[i-1])*0.5;
+	      if (i==E->mesh.noz) dr = (E->sphere.rr[i]-E->sphere.rr[i-1])*0.5;
+	      else if (i==1) dr = (E->sphere.rr[i+1]-E->sphere.rr[i])*0.5;
+	      sigma_3d[m][n] = rho_3d[m][n]*dr;
+              }
+      }
+      
+    calculate_potential_from_3D_sigma(E,sigma_3d,potential_intl_loads,icompress);
+
+  return;
+}
+//
+void calculate_potential_from_3D_sigma(struct All_variables *E, double ** sigma_3d, double ** potential_intl_loads, int icompress)
+{
+
+    static int been=0;
+    void  sphere_expansion_VE();
+    void  exchange_sphcs();
+    void calculate_potential_final();
+
+    int m,i,j,k,p,noz,node,global_z_id,ipolarw,isource,llmax;
+
+    const int dims=E->mesh.nsd,dofs=E->mesh.dof;
+    const int vpts=vpoints[E->mesh.nsd];
+    const int ends=enodes[E->mesh.nsd];
+    
+    if (been==0)  {
+        been = 1;
+    }
+
+    llmax = E->output.llmax;
+
+    for(k=1; k<=E->mesh.noz; k++)    {  //global z;
+      for (p = 0; p < E->sphere.hindice+2; ++p) {
+        E->sphere.sphc_c[k][p] = 0.;
+        E->sphere.sphs_c[k][p] = 0.;
+      }
+    }
+
+    noz = E->lmesh.noz-1;
+    if(E->parallel.me_loc[3]==E->parallel.nprocz-1) noz = E->lmesh.noz;
+       // noz as defined avoids double counting in exchange_sphcs_to_all 
+    for (i=1;i<=noz;i++) {
+          for (m=1;m<=E->sphere.caps_per_proc;m++) {
+            for (j=1;j<=E->lmesh.nsf;j++) {
+              node = (j-1)*E->lmesh.noz+i;
+              E->Xsurf[1][m][j] = sigma_3d[m][node];
+            }
+          }
+          global_z_id = E->lmesh.nzs + i -1;
+          sphere_expansion_VE(E,E->Xsurf[1],
+             E->sphere.sphc_c[global_z_id],E->sphere.sphs_c[global_z_id],llmax);
+    }
+
+    if (E->parallel.nprocz>1) { // if >1 cap in z-direction (probably not)
+       for(k=1; k<=E->mesh.noz; k++)    {  //comment by tao: global z;
+          exchange_sphcs_to_all(E,E->sphere.sphc_c, k);
+          exchange_sphcs_to_all(E,E->sphere.sphs_c, k);
+          }
+      } // end for if E->parallel.nprocz>1
+
+    ipolarw = 1;   // determine polar motion
+    isource = 1;   // volume source
+    calculate_potential_final(E,E->sphere.sphc_c,E->sphere.sphs_c,potential_intl_loads,llmax,icompress,isource,ipolarw);
+
+    return;
+}
+
+
+// compute potential from the sources in sphc_c and sphs_c 
+//
+void  calculate_potential_final(struct All_variables *E, double ** sphc_c, double ** sphs_c, double ** potential, int llmax, int icompress,int isource, int icon)
+{
+    int ib,is,m,ll,ll1,ll2,mm,p,i,j,k,n,ik,node;
+    static int been=0;
+    int global_z_id;
+    int noz,nz1,nz2,nz3,mz1,mz2,mz3;
+
+    static double M_conv, C_conv, omega;
+    const int dims=E->mesh.nsd,dofs=E->mesh.dof;
+    const int vpts=vpoints[E->mesh.nsd];
+    const int ends=enodes[E->mesh.nsd];
+    
+    double phi_lm_cs, phi_lm_sn, tmp, tmp1, dlayer;
+    double M[3],centri_pot;
+
+    double cm[3];
+    static double Earth_mass;
+
+    if (been==0)  {
+        been = 1;
+        omega = 2.0*M_PI/(24.0*3600.0);  // rotation_rate
+        M_conv = (3.0*E->data.grav_const*E->data.density)/(omega*omega*E->ve_data_cont.kf)*5.0*sqrt(4.0*M_PI/15.0); // 3G*rho/(w^2*kf)*5sqrt(4pi/15)
+          // convert non-dim phi into non-dim M
+        C_conv = -omega*omega/(4.0*M_PI*E->data.grav_const*E->data.density);
+          // convert non-dim r^2(m1*cosf+m2*sinf)*sintcost into non-dim centrifugal potential, which can be added into the potential terms;
+          // to dimensionalize the potential, multiply by 4*pi*G*rho*R^2.
+    }
+
+    for (m=1;m<=E->sphere.caps_per_proc;m++)
+    for (node=1;node<=E->lmesh.nno;node++) 
+        potential[m][node] = 0.0;
+
+    // determine the depth at which the field is computed
+    nz1 = 1;
+    nz2 = E->lmesh.noz;
+    nz3 = 1;
+    if (icompress==0)  { // incompressible, only need CMB and surface potential
+	  if (E->parallel.nprocz==1) {  // only 1 cpu in z direction
+              nz3 = E->lmesh.noz-1;
+	  }
+	  else {  // >1 cpu in z
+            if (E->parallel.me_loc[3]==0) {
+              nz3 = E->lmesh.noz+1;  // only do for the CMB
+	    }
+	    else if (E->parallel.me_loc[3]==E->parallel.nprocz-1) {
+              nz1 = E->lmesh.noz;  // only do for the surface 
+	    }
+	    else {
+              nz1 = E->lmesh.noz+1;  // no calculations
+	    }
+	  }
+     }
+
+    // determine the depth at which the source is needed
+    mz1 = 1;
+    mz2 = E->mesh.noz;
+    mz3 = 1;
+    if (isource==0) { // only need the source at the surface and CMB as in incompressible case, most of the time
+       mz3 = E->mesh.noz-1;
+    }
+
+    for (ll=1;ll<=llmax;ll++) // degree 0 term is supposed to be zero at surface, but here we are excluding it for each layer
+      for (mm=0;mm<=ll;mm++) {
+        p = E->sphere.hindex[ll][mm];
+            
+        for (m=1;m<=E->sphere.caps_per_proc;m++)
+        for (i=nz1;i<=nz2;i=i+nz3) { // field point
+            // compute phi_lm(r)
+            phi_lm_cs = 0.0;
+            phi_lm_sn = 0.0;
+
+            for (k=mz1;k<=mz2;k=k+mz3) { // source point
+              ik = k + (i-1)*E->mesh.noz;
+              tmp = E->sphere.tables_rr[ll][ik];
+              phi_lm_cs += tmp * sphc_c[k][p];
+              phi_lm_sn += tmp * sphs_c[k][p];
+            }
+
+	    //compute the potential at grid point for this depth or i
+            for (j=1;j<=E->lmesh.nsf;j++) {
+                node = (j-1)*E->lmesh.noz+i;
+                potential[m][node] += (phi_lm_cs*E->Tbl_cs[m][mm][j] + phi_lm_sn*E->Tbl_sn[m][mm][j])
+                            *E->Tbl_lm[m][p][j];          
+            }
+
+            if (ll==2 && mm==1)
+              if (E->ve_data_cont.polar_wander && icon==1 && icompress && E->parallel.me_loc[3] == E->parallel.nprocz-1 && i==E->lmesh.noz){
+                  M[0] = M_conv * phi_lm_cs * pow(E->sphere.R[E->mesh.levmax][i],3.0);
+                  M[1] = M_conv * phi_lm_sn * pow(E->sphere.R[E->mesh.levmax][i],3.0);
+                    E->ve_data_cont.PW_incr[0] = M[0];
+                    E->ve_data_cont.PW_incr[1] = M[1];
+            }
+        } // end of (i=1;i<=E->lmesh.noz;i++) and m loop
+      }  // end of ll and mm
+	 //
 return;
 }

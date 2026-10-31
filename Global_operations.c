@@ -600,54 +600,6 @@ double global_vdot_e(E,A,B,lev)
   return (prod);
    }
 
-/*
-   Get the dot product of two vectors A and B summed over surface nodes
-   A and B are vectors of global size, but only the surface nodes are used
-   */
-double global_vdot_surface(E,A,B,lev)
-   struct All_variables *E;
-   double **A,**B;
-   int lev;
-
-{
-  int m,a,i,node,e,j,neq,nel, k;
-  double prod, temp,temp1;
-
-  const int ends=enodes[E->mesh.nsd];
-
-    temp = 0.0;
-    prod = 0.0;
-
-  for (m=1;m<=E->sphere.caps_per_proc;m++)  {
-    nel=E->lmesh.nel;
-    temp1 = 0.0;
-    // only for surface cpus
-    if(E->parallel.me_loc[3] == E->parallel.nprocz - 1) {
-      // only for surface nodes
-      // loop through nodes
-      /*
-      for (i=1;i<=E->lmesh.noy;i++)
-        for (j=1;j<=E->lmesh.nox;j++)  {
-           node = k+(j-1)*E->lmesh.noz+(i-1)*E->lmesh.nox*E->lmesh.noz; 
-           */
-      for(i=1; i<=E->lmesh.noy; i++) {
-        for (j=1; j<=E->lmesh.nox; j++) {
-          node = E->lmesh.noz + (j-1)*E->lmesh.noz+(i-1)*E->lmesh.nox*E->lmesh.noz;
-          for (k=1; k<=E->mesh.nsd; k++) {
-            a = E->id[m][node].doff[k];
-            temp += A[m][a]*B[m][a];
-          }
-        }
-      }
-    }
-
-  }
-
-  MPI_Allreduce(&temp, &prod,1,MPI_DOUBLE,MPI_SUM,E->parallel.world);
-
-  return (prod);
-}
-
 double global_vdot(E,A,B,lev)
    struct All_variables *E;
    double **A,**B;
@@ -1592,7 +1544,7 @@ void load_to_CM(E,X_surf,X_cmb, add_incr_CM)
 // icon always 1 when called.
 void load_to_CM_grav_comp(struct All_variables *E, int load_only, int add_incr_CM)
 {
-	void calculate_potential_comp_OR_correct_CM(struct All_variables *E, double ** all_potential, int load_only, int icon, int Only_Correct_CM, int add_incr_CM);
+	void calculate_potential_comp_OR_correct_CM();
 
   if(E->parallel.me==0)
 	  printf("debug deg-1, now with the load_to_CM_grav_comp implementation\n");
@@ -2052,7 +2004,7 @@ void remove_average(E,X3,ic)
 
 
 /* =============================================================================
- * polar_wander_effects (E,X_surf,X_cmb,potential_surf,potential_cmb)
+ * polar_wander_effects_incomp (E,X_surf,X_cmb,potential_surf,potential_cmb)
  * =============================================================================
  * (This routine is only called by calculate_potential.)
  * Adds an incremental centrifugal potential (due to the surface masses passed
@@ -2071,7 +2023,7 @@ void remove_average(E,X3,ic)
  * Written by Archie, March 2004.
  * =============================================================================
  */
-void polar_wander_effects(E,X_surf,X_cmb,potential_surf,potential_cmb)
+void polar_wander_effects_incomp(E,X_surf,X_cmb,potential_surf,potential_cmb)
     struct All_variables *E;
     double **X_surf;
     double **X_cmb;
@@ -2300,10 +2252,10 @@ void find_rotation_axis(E,X_surf,X_cmb, M)
 /* =============================================================================
  * find_rotation_axis (E,X_surf,X_cmb, M)
  * =============================================================================
- * (This routine is only called by polar_wander_effects.)
+ * (This routine is only called by polar_wander_effects_incomp.)
  * Calculates two components of the inertia tensor of the earth and converts
  * them to M, the incremental pole position, for purposes of polar wander
- * calculations. This routine is called only by polar_wander_effects(), above.
+ * calculations.
  *    I_13 = - Integral( (X_s*r_s^4 + X_b*r_b^4) *sin(t)*cos(t)*cos(f)* dO )
  *    I_23 = - Integral( (X_s*r_s^4 + X_b*r_b^4) *sin(t)*cos(t)*sin(f)* dO )
  *  where r_* is the radius at the surface (s) and cmb (b),
@@ -2409,6 +2361,228 @@ void find_rotation_axis1(E,X_surf,X_cmb, M)
 
     return;
 }
+
+
+void polar_wander_effects_comp(struct All_variables *E, double ** all_potential, int icon)
+{
+
+   static double M_conv, C_conv, omega;
+   double M[3],centri_pot,t,f,r,temp;
+   static int been_here = 0;
+   double  potential[3],prod[3];
+   static double *oldpotl_surf[NCS], *oldpotl_cmb[NCS];
+   int procz,m,n,node;
+
+    if (been_here==0) {
+            been_here = 1;
+          for (m=1;m<=E->sphere.caps_per_proc;m++)   {
+              oldpotl_surf[m] =(double*)malloc((E->lmesh.nsf+2)*sizeof(double));
+              oldpotl_cmb[m] = (double*)malloc((E->lmesh.nsf+2)*sizeof(double));
+              for (n=1;n<=E->lmesh.nsf;n++)  {
+                oldpotl_surf[m][n] = 0.0;
+                oldpotl_cmb[m][n] = 0.0;
+              }
+            }
+	omega = 2.0*M_PI/(24.0*3600.0);  // rotation_rate
+        M_conv = (3.0*E->data.grav_const*E->data.density)/(omega*omega*E->ve_data_cont.kf)*5.0*sqrt(4.0*M_PI/15.0); // 3G*rho/(w^2*kf)*5sqrt(4pi/15)
+          // convert non-dim phi into non-dim M
+        C_conv = -omega*omega/(4.0*M_PI*E->data.grav_const*E->data.density);
+          // convert non-dim r^2(m1*cosf+m2*sinf)*sintcost into non-dim centrifugal potential, which can be added into the potential terms;
+          // to dimensionalize the potential, multiply by 4*pi*G*rho*R^2.
+        }
+
+       M[0]=M[1]=M[2]=0.0;
+      // !!! only top processors have PW_incr now. should send to all other processors below.
+
+      if(E->parallel.nprocz>1){
+            if(E->parallel.me_loc[3] == E->parallel.nprocz-1){
+                  //send to E->parallel.me + procz (1 to E->parallel.nprocz)
+              M[0] = E->ve_data_cont.PW_incr[0];
+              M[1] = E->ve_data_cont.PW_incr[1];
+              for(procz=0; procz<E->parallel.nprocz-1; procz++)
+                  MPI_Send(M, 2, MPI_DOUBLE, procz, 0, E->parallel.vertical_comm);
+                }
+            if(E->parallel.me_loc[3] != E->parallel.nprocz-1){
+                    MPI_Recv(M,2, MPI_DOUBLE, E->parallel.nprocz-1, 0, E->parallel.vertical_comm, MPI_STATUS_IGNORE);
+                    //receive from E->parallel.me - E->parallel.me_loc[3];
+                }
+            E->ve_data_cont.PW_incr[0] = M[0];
+            E->ve_data_cont.PW_incr[1] = M[1];
+      }
+
+      // add centrifugal potential
+            // compute: -r^2*omega^2*sin(t)*cos(t)*[M[0]cos(f) + M[1]sin(f)]
+      for(m=1;m<=E->sphere.caps_per_proc;m++)
+      for(node=1;node<=E->lmesh.nno;node++){
+              t = E->SX[E->mesh.levmax][m][1][node];
+              f = E->SX[E->mesh.levmax][m][2][node];
+              r = E->SX[E->mesh.levmax][m][3][node];
+              centri_pot = r*r*sin(t)*cos(t)*(M[0]*cos(f)+M[1]*sin(f))*C_conv;
+              all_potential[m][node] += centri_pot;
+          }
+
+      /* calculate E->ve_data_cont.potential_vary_PW.  */
+
+        potential[0]=potential[1]=0.0;
+        prod[0]=prod[1]=0.0;
+        for (m=1;m<=E->sphere.caps_per_proc;m++)
+        for (n=1;n<=E->lmesh.nsf;n++)   {
+            node = n*E->lmesh.noz;
+            t = E->SX[E->mesh.levmax][m][1][node];
+            f = E->SX[E->mesh.levmax][m][2][node];
+
+            if (E->parallel.me_loc[3]==E->parallel.nprocz-1)   {
+                  node = (n-1)*E->lmesh.noz + E->lmesh.noz;
+                      //potential_surf[m][n] = all_potential[m][node];
+                    potential[0] += all_potential[m][node]*all_potential[m][node];
+                    temp = all_potential[m][node]-oldpotl_surf[m][n];
+                    potential[1] += temp*temp;
+                    oldpotl_surf[m][n] = all_potential[m][node];
+              }
+            if (E->parallel.me_loc[3]==0)   {
+                      //potential_cmb [m][n] = ;
+                    node = (n-1)*E->lmesh.noz + 1;
+                    potential[0] += all_potential[m][node]*all_potential[m][node];
+                    temp = all_potential[m][node]-oldpotl_cmb[m][n];
+                    potential[1] += temp*temp;
+                    oldpotl_cmb[m][n] = all_potential[m][node];
+            }
+        }
+
+        MPI_Allreduce(potential,prod,3,MPI_DOUBLE,MPI_SUM,E->parallel.world);
+        E->ve_data_cont.potential_vary_PW = sqrt(prod[1]/prod[0]);
+       //
+
+  return;
+  }
+
+ // determine CM and apply it to re-calculate the loads or all_stress
+// only need degree-1 gravitational potential
+//
+void center_mass_effects_comp(struct All_variables *E, double ** all_potential, int add_incr_CM)
+{
+    void remove_average();
+
+    double density_surf,density_cmb;
+    const int dims=E->mesh.nsd,dofs=E->mesh.dof;
+    const int vpts=vpoints[E->mesh.nsd];
+    const int ends=enodes[E->mesh.nsd];
+
+    int procz;
+    double xy_mag, r0, t0, f0, density_jump, t1, f1, rel_cos;
+    static int been = 0;
+    int global_z_id,noz,node,llmax;
+    int m,ll,mm,p,i,j,k,ik,n,el;
+    double phi_lm_cs, phi_lm_sn, tmp, dlayer;
+    double *gnxx, *gnda;
+    double cm[3];
+    static double Earth_mass;
+
+                // compute Earth's mass
+    if (been==0){
+           been = 1;
+           Earth_mass = 0.0;
+           tmp = 0.0;
+
+           for (m=1;m<=E->sphere.caps_per_proc;m++)
+           for (el=1;el<=E->lmesh.nel;el++) {
+             for (j=1;j<=vpts;j++) {
+               gnda = E->gDA[m][el].vpt;
+               tmp += E->erho[E->mesh.levmax][m][el]*gnda[j]*g_point[j].weight[dims-1];
+               } // end j loop
+             } // end el loop             
+          MPI_Allreduce(&tmp,&Earth_mass,1,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD);
+          Earth_mass += 4./3.*M_PI*E->data.density_below/E->data.density*pow(E->sphere.ri,3);
+          } // end compute Earth's mass
+
+      for (i=0;i<3;i++)
+          cm[i] = 0.0;
+
+    // compute deg-1 motion (cm) by determining ll=1 potential for the surface, i.e., for the top cpu and i=noz, and then update all_stress
+    //
+     if(E->parallel.me_loc[3] == E->parallel.nprocz-1){
+
+        ll=1;
+        for (mm=0;mm<=ll;mm++)   {
+        p = E->sphere.hindex[ll][mm];
+        for(m=1;m<=E->sphere.caps_per_proc;m++){
+          i=E->lmesh.noz; // surface. only one point as this grid. first column of this grid.
+          phi_lm_cs = 0.0;
+          phi_lm_sn = 0.0;
+          for (k=1;k<=E->mesh.noz;k++) {
+            ik = k + (i-1)*E->mesh.noz;
+            tmp = E->sphere.tables_rr[ll][ik];
+            phi_lm_cs += tmp*E->sphere.sphc_c[k][p];
+            phi_lm_sn += tmp*E->sphere.sphs_c[k][p];
+          }
+
+          if (mm==1) {
+            cm[0] = -phi_lm_cs*sqrt(12.*M_PI)/Earth_mass*pow(E->sphere.R[E->mesh.levmax][i],2);
+            cm[1] = -phi_lm_sn*sqrt(12.*M_PI)/Earth_mass*pow(E->sphere.R[E->mesh.levmax][i],2);
+          }
+          else {
+            cm[2] = phi_lm_cs*sqrt(12.*M_PI)/Earth_mass;
+          }
+        }
+      }   // end for ll=1 and mm
+    } // end for top cpu and cm calculation
+
+
+    // !!! only top processors have cm now. send cm to all other vertical processors.
+    if(E->parallel.nprocz>1){
+      //printf("MPI: before pass cm, %d\n", E->parallel.me);
+      if(E->parallel.me_loc[3] == E->parallel.nprocz-1){
+            //send to E->parallel.me + procz (1 to E->parallel.nprocz)
+      for(procz=0; procz<E->parallel.nprocz-1; procz++)
+        MPI_Send(cm, 3, MPI_DOUBLE, procz, 0, E->parallel.vertical_comm);
+      }
+        if(E->parallel.me_loc[3] != E->parallel.nprocz-1){
+      MPI_Recv(cm,3, MPI_DOUBLE, E->parallel.nprocz-1, 0, E->parallel.vertical_comm, MPI_STATUS_IGNORE);
+      //receive from E->parallel.me - E->parallel.me_loc[3];
+      }
+    }
+
+    if (add_incr_CM == 1)
+      for (j=0;j<3;j++) E->ve_data_cont.CM_incr[j] = cm[j];
+    else if (add_incr_CM == 2)
+      for (j=0;j<3;j++) E->ve_data_cont.CM_incr[j] += cm[j];
+
+
+    // convert CM coordinates to spherical (r0,t0,f0):
+    xy_mag = sqrt( cm[0]*cm[0] + cm[1]*cm[1] );
+    r0 = sqrt( cm[2]*cm[2] + xy_mag*xy_mag );
+    if (r0) {
+      t0 = acos( cm[2]/r0 );
+      f0 = acos( cm[0]/xy_mag );
+      if ( cm[1]<0 ) f0 = 2.0*M_PI - f0 ;
+    }
+    else t0 = f0 = 0.0 ;
+
+    // apply additional loads to all_stress
+    for (m=1;m<=E->sphere.caps_per_proc;m++)
+    for (i=1;i<=E->lmesh.noz;i++) {
+      j = E->lmesh.nzs + i -1;
+      for (k=1;k<=E->lmesh.nsf;k++) {
+        node = (k-1)*E->lmesh.noz+i;
+        t1 = E->SX[E->mesh.levmax][m][1][node];
+        f1 = E->SX[E->mesh.levmax][m][2][node];
+        rel_cos = -1.0 * (cos(t1)*cos(t0) + sin(t1)*sin(t0)*cos(f0-f1)) ;
+        E->Xsurf[1][m][k] = E->rho_jump1D[E->mesh.levmax][j]*r0*rel_cos;
+      }
+      if (i!=1)
+        remove_average(E,E->Xsurf[1],1);
+      else
+        remove_average(E,E->Xsurf[1],0);
+
+      for (k=1;k<=E->lmesh.nsf;k++) {
+        node = (k-1)*E->lmesh.noz+i;
+        E->slice_ve.all_stress[m][node] += E->Xsurf[1][m][k];
+      }
+   }    // end for i
+
+return;
+}
+
 
 /* ================================================== */
 void sum_across_surface(E,data,total)

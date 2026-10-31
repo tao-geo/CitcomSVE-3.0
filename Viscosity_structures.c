@@ -134,6 +134,7 @@ void elastic_viscosity_input(struct All_variables *E)
     E->viscosity.sdepv_misfit = 1.0;
     input_boolean("SDEPV",&(E->viscosity.SDEPV),"off",m);
     if (E->viscosity.SDEPV) {
+	    input_int("num_mat",&(E->viscosity.num_mat),"1",m);
       E->viscosity.sdepv_visited = 0;
       input_float_vector("sdepv_expt",E->viscosity.num_mat,(E->viscosity.sdepv_expt),m);
       input_float_vector("sdepv_trns",E->viscosity.num_mat,(E->viscosity.sdepv_trns),m);
@@ -143,7 +144,7 @@ void elastic_viscosity_input(struct All_variables *E)
         E->viscosity.sdepv_trns[i]=E->viscosity.sdepv_trns[i]/E->ve_data_cont.shear_mod;
         E->viscosity.sdepv_bg[i]  =E->viscosity.sdepv_bg[i]  /E->ve_data_cont.shear_mod;
         }
-    }
+    } 
 
 
     input_boolean("PDEPV",&(E->viscosity.PDEPV),"off",m); /* plasticity addition by TWB */
@@ -208,7 +209,6 @@ void set_mech_model_from_files(struct All_variables *E)
     void visc_from_file();
     void mech_model_from_file();
     void elastic_model_from_file_3D();
-    void set_mat_group_for_litho(struct All_variables *);
 
     mech_model_from_file(E);
 
@@ -218,48 +218,10 @@ void set_mech_model_from_files(struct All_variables *E)
     if (E->ve_data_cont.ELASTIC_FROM_FILE)
         elastic_model_from_file_3D(E, E->elambda_o[E->mesh.levmax],E->esmu_o[E->mesh.levmax],E->ve_data_cont.elastic_file,E->ve_data_cont.shear_mod);
 
-    // set mat group for lithosphere (as 1)
-    set_mat_group_for_litho(E);
 
     return;
 }
 
-
-/*
-set mat group for lithosphere to be 1.
-This is for cases with lithosphere of varying thickness.
-It is based on elemental viscosity, i.e., E->evi_o[lev][m][el] * E->data.ref_viscosity, which was constructed 
-in both mech_model_from_file and visc_from_file.
-*/
-void set_mat_group_for_litho(struct All_variables *E){
-    int el, m;
-    const int lev = E->mesh.levmax;
-    double VISC_LITHO = 1e25; // the bound of visc for lithosphere "material"
-
-    for(m=1;m<=E->sphere.caps_per_proc;m++)
-      for(el=1; el<=E->lmesh.nel; el++){
-        if (E->evi_o[lev][m][el] * E->data.ref_viscosity > VISC_LITHO){
-          E->mat[m][el] = 1;
-        }
-      }
-    
-    // output matgroup for debug
-    FILE * fp_mat;
-    char filename[200];
-    sprintf(filename, "%s.mat_group.%d", E->control.data_file, E->parallel.me);
-    fp_mat = fopen(filename, "w");
-    if (fp_mat == NULL) {
-      fprintf(stderr, "Error opening file %s\n", filename);
-      return;
-    }
-    for(m=1;m<=E->sphere.caps_per_proc;m++) {
-      for(el=1; el<=E->lmesh.nel; el++){
-        fprintf(fp_mat, "%d\n",E->mat[m][el]);
-      }
-    }
-    fclose(fp_mat);
-    return ;
-}
 
 /* ============================================ */
 /* get_system_viscosity
@@ -305,8 +267,8 @@ void get_system_viscosity(E,propogate,evisc,visc)
       if (been_here==0) {
         for(m=1;m<=E->sphere.caps_per_proc;m++)
           for(e=1;e<=E->lmesh.nel;e++) {
-            E->EVolder[m][e] = E->evi_o[E->mesh.levmax][m][e]; // initialize EVold, EVolder to be no-stress viscosity
-            E->EVold[m][e] = E->evi_o[E->mesh.levmax][m][e];
+            E->EVolder[m][e] = 1.0;
+            E->EVold[m][e] = 1.0;
            }
         been_here ++;
         }
@@ -315,15 +277,10 @@ void get_system_viscosity(E,propogate,evisc,visc)
           for(e=1;e<=E->lmesh.nel;e++) {
             E->EVolder[m][e] = E->EVold[m][e];
             E->EVold[m][e] = 0.125*
-              (log10(visc[m][E->ien[m][e].node[1]]) + log10(visc[m][E->ien[m][e].node[2]])
-              +log10(visc[m][E->ien[m][e].node[3]]) + log10(visc[m][E->ien[m][e].node[4]])
-              +log10(visc[m][E->ien[m][e].node[5]]) + log10(visc[m][E->ien[m][e].node[6]])
-              +log10(visc[m][E->ien[m][e].node[7]]) + log10(visc[m][E->ien[m][e].node[8]]));
-            // temp1 = 0;
-            // for(j=1;j<=vpts;j++)
-            //       temp1 += log10(evisc[m][(e-1)*vpts + j]);  // this does not work! evisc is not visc, but mu_hat: mu/(1+alpha) (Geruo A 2012)
-            // temp1 /= vpts;
-            E->EVold[m][e] = pow(10.0,E->EVold[m][e]);
+              (visc[m][E->ien[m][e].node[1]] + visc[m][E->ien[m][e].node[2]]
+              +visc[m][E->ien[m][e].node[3]] + visc[m][E->ien[m][e].node[4]]
+              +visc[m][E->ien[m][e].node[5]] + visc[m][E->ien[m][e].node[6]]
+              +visc[m][E->ien[m][e].node[7]] + visc[m][E->ien[m][e].node[8]]);
            }
          }
     }
@@ -412,8 +369,10 @@ void mech_model_from_file(struct All_variables *E)
     static double *radius, *model[6];
     static int *matgroup;
     double rr;
+    static float *rho_temp, *rho_temp1;
     const int vpts = vpoints[E->mesh.nsd];
     const int lev = E->mesh.levmax;
+    int element;
 
     double temp1, temp2;
 
@@ -432,8 +391,13 @@ void mech_model_from_file(struct All_variables *E)
     if (been_here==0)  {
       matgroup = (int *)malloc((ndepth+1)*sizeof(int));
       radius = (double *)malloc((ndepth+1)*sizeof(double));
+      rho_temp = (float *)malloc((E->mesh.elz+2)*sizeof(float));
+      rho_temp1 = (float *)malloc((E->mesh.elz+2)*sizeof(float));
       for (i=1;i<=5;i++)
         model[i] = (double *)malloc((ndepth+1)*sizeof(double));
+      for (i1=1;i1<=E->mesh.elz+1;i1++) {
+	      rho_temp[i1] = rho_temp1[i1] = 0.0;
+          }
       been_here = 1;
       }
 
@@ -498,26 +462,42 @@ void mech_model_from_file(struct All_variables *E)
               E->evi_o[lev][m][el] = tmp5 / E->data.ref_viscosity;
               E->mat[m][el] = mgroup;
             }
-    } // end for jj of lmesh.elz
-  // end for m for-loop
+
+       rho_temp[E->lmesh.ezs + jj] = tmp1/E->data.density;
+
+    } // end for jj of lmesh.elz and m loop
  
   if (E->ve_data_cont.OneDmodel_read_g == 1)
     ele_to_nodes(E, E->egrav[lev], E->grav[lev], lev); // add by tao
   else
     compute_g(E, lev);
 
-	// note: for lower levels, those needed variables are filled by project_viscosity.
 
-  if (been_here == 1 && E->parallel.me < E->parallel.nprocz) {
-    fprintf(E->fp, "debug earth model, elemental, from proc %d\n",
+  // define density jump across each element layer in radial direction which is
+  // used for computing restoring force and gravitational potential in 
+  // compressible models
+  //
+
+   i2 = E->mesh.elz+1;
+   MPI_Allreduce(rho_temp, rho_temp1, i2, MPI_FLOAT, MPI_SUM, E->parallel.vertical_comm);       
+   E->rho_jump1D[lev][1] = E->data.density_below/E->data.density - rho_temp1[1];
+   for (i1=1;i1<E->mesh.elz;i1++)  {
+      E->rho_jump1D[lev][i1+1] = rho_temp1[i1] - rho_temp1[i1+1];
+   }
+   E->rho_jump1D[lev][E->mesh.elz+1] = rho_temp1[E->mesh.elz] - E->data.density_above/E->data.density;
+
+	// note: for lower levels, those needed variables are filled by project_viscosity.
+	//
+
+//  if (been_here == 1 && E->parallel.me < E->parallel.nprocz) {
+    fprintf(E->fp_out, "debug earth model, elemental, from proc %d\n",
             E->parallel.me);
-    int element;
-    int m = 1;
     // print header
-    fprintf(E->fp, "z(element-center) dz(element-size) rho lambda mu g visc \n");
+    fprintf(E->fp_out, "z(element-center) dz(element-size) rho lambda mu g visc \n");
+    for(m=1;m<=E->sphere.caps_per_proc;m++)
     for (element = 1; element <= E->lmesh.elz; element++) {
 
-      fprintf(E->fp, "%e %e %e %e %e %e %e %d",
+      fprintf(E->fp_out, "%e %e %e %e %e %e %e %d\n",
               E->ECO[E->mesh.levmax][m][element].centre[3] * E->sphere.dradius,
               E->ECO[E->mesh.levmax][m][element].size[3] * E->sphere.dradius,
               E->erho[E->mesh.levmax][m][element] * E->data.density,
@@ -526,10 +506,16 @@ void mech_model_from_file(struct All_variables *E)
               E->egrav[E->mesh.levmax][m][element] * E->data.grav_acc,
               E->evi_o[E->mesh.levmax][m][element] * E->data.ref_viscosity,
               E->mat[m][element]);
-      fprintf(E->fp, "\n");
     }
+
+    fprintf(E->fp_out, "density jump across each grid depth\n");
+    for (i1=1;i1<=E->mesh.noz;i1++)  {
+      fprintf(E->fp_out, "%d %e %e\n",i1,E->sphere.rr[i1]*E->sphere.dradius,E->rho_jump1D[E->mesh.levmax][i1]*E->data.density);
+     }
     been_here = 2;
-  }
+
+    fflush(E->fp_out);
+ // }
 
   return;
  }
@@ -718,8 +704,8 @@ void visc_from_file(E)
         fgets(input_s,200,fp1);
         sscanf(input_s,"%g",&temp1);
         // visc_reg[k] = log10f(temp1);       // another possibility is visc_reg[k] = log10f(temp1);
-       visc_reg[k] = 1/temp1;       // use Harmonic Mean
-        // visc_reg[k] = temp1;      
+//        visc_reg[k] = 1/temp1;       // use Harmonic Mean
+        visc_reg[k] = temp1;      
         }
 
       if (i1!=i2) {     // read one more layer and interpolate radially
@@ -733,8 +719,8 @@ void visc_from_file(E)
           fgets(input_s,200,fp1);
           sscanf(input_s,"%g",&temp3);
           // visc_reg[k] = visc_reg[k]*temp1 + log10f(temp3)*temp2;  // also use log10f here if used above
-         visc_reg[k] = visc_reg[k]*temp1 + 1/temp3*temp2;  // use Harmonic Mean
-          // visc_reg[k] = visc_reg[k]*temp1 + temp3*temp2;  // use Harmonic Mean
+//          visc_reg[k] = visc_reg[k]*temp1 + 1/temp3*temp2;  // use Harmonic Mean
+          visc_reg[k] = visc_reg[k]*temp1 + temp3*temp2;  // use Harmonic Mean
           }
         }
       fclose(fp1);
@@ -749,8 +735,8 @@ void visc_from_file(E)
                 + visc_FE[m][E->sien[m][ee].node[3]] 
                 + visc_FE[m][E->sien[m][ee].node[4]])/4.0; 
          el = jj + (j-1)*E->lmesh.elz + (i-1)*E->lmesh.elz*E->lmesh.elx;
-	//  E->evi_o[E->mesh.levmax][m][el] = temp1/E->data.ref_viscosity;
-	 E->evi_o[E->mesh.levmax][m][el] = 1.0/temp1/E->data.ref_viscosity;
+	 E->evi_o[E->mesh.levmax][m][el] = temp1/E->data.ref_viscosity;
+//	 E->evi_o[E->mesh.levmax][m][el] = 1.0/temp1/E->data.ref_viscosity;
             // E->evi_o[E->mesh.levmax][m][el] = pow(10,temp1)/E->data.ref_viscosity;  // use power if log10 used above
          }
 
@@ -845,14 +831,14 @@ void elastic_model_from_file_3D(E,element_var1, element_var2,filename, normaliza
       rr = (E->sx[m][3][jj]+E->sx[m][3][jj+1])/2.0;
 
       if (rr>=radius_visc[ndepth]) {
-         continue;
-        // i1 = ndepth;
-        // i2 = ndepth;
+//          continue;
+        i1 = ndepth;
+        i2 = ndepth;
         }
       else if (rr<=radius_visc[1])  {
-       continue;
-        //  i1=1;
-        //  i2=1;
+//        continue;
+         i1=1;
+         i2=1;
         }
       else {
         for (i=1;i<ndepth;i++)  {
@@ -1127,8 +1113,6 @@ void visc_from_S(E,EEta,propogate)
     int m,e,l,z,jj,kk;
     static int been_here=0;
 
-    double visc_stress; // visc_stress is the updated viscosity from the stress formulation
-
     const int vpts = vpoints[E->mesh.nsd];
     const int nel = E->lmesh.nel;
 
@@ -1137,9 +1121,23 @@ void visc_from_S(E,EEta,propogate)
 
     if (been_here==0)  {
       for(m=1;m<=E->sphere.caps_per_proc;m++)  
-        for(e=1;e<=nel;e++)/* initialize with unity if no velocities around */
-          E->S2inv[m][e] = 0.0;  // change from 1.0 to 0.0 (Tao)
+        for(e=1;e<=nel;e++)/* initialize with zero if no velocities around */
+          E->S2inv[m][e] = 0.0;
+
+// after 3-D viscosity is read and evi_o is set. The following is set high visc
+// lithospheric root as group 5, newtonian, but small visc region as group 4 (non-newtonian)
+      for(m=1;m<=E->sphere.caps_per_proc;m++)
+        for(e=1;e<=nel;e++)   {
+           if (E->mat[m][e]==4  || E->mat[m][e]==5)  {  // for anything above the 300 km depth
+              if(E->evi_o[E->mesh.levmax][m][e] > 1000.0)
+                      E->mat[m][e]=5;
+              else
+                      E->mat[m][e]=4;
+           }
+         }
+
       been_here = 1;
+
       }
     else 
       stress_2_inv(E,E->S2inv,1,E->viscosity.iterate);
@@ -1155,42 +1153,10 @@ void visc_from_S(E,EEta,propogate)
            scale1=(one+pow(temp2,exponent1));
            scale = scale*scale1;
 
-            // // print out viscosity for debugging
-            // if(E->parallel.me==1) {
-            //   fprintf(E->fp_out,"%d %d %e %e %e %e %e %e\n",e,E->mat[m][e], E->viscosity.sdepv_bg[l],
-            //     E->viscosity.sdepv_trns[l], E->viscosity.sdepv_expt[l], E->S2inv[m][e], EEta[m][(e-1)*vpts + 1],scale);
-            // }
-            // // fflush(E->fp_out);
-
-           for(jj=1;jj<=vpts;jj++){
-              // EEta[m][(e-1)*vpts + jj] = scale*EEta[m][(e-1)*vpts + jj];
-              visc_stress = scale*EEta[m][(e-1)*vpts + jj]; // EEta should be overwritten by the 1D no-stress viscosity for every iteration!
-              // add a damping effect: visc_new = (visc_stress ^ 0.5) * (visc_old ^ 0.5), 
-              // where visc_stress is the updated viscosity from the stress formulation.
-              EEta[m][(e-1)*vpts + jj] = sqrt(visc_stress) * sqrt(E->EVold[m][e]); // E->EVold[m][e] is the old viscosity from the previous iteration (or step if first iteration?)
-           }
-          
-            
+           for(jj=1;jj<=vpts;jj++)
+//                EEta[m][(e-1)*vpts + jj] = scale*EEta[m][(e-1)*vpts + jj];
+                EEta[m][(e-1)*vpts + jj] = sqrt(scale*EEta[m][(e-1)*vpts + jj])*sqrt(E->EVold[m][e]);
         }
-      
-      // output viscosity for debugging
-      // if (E->monitor.solution_cycles % 10 == 0){
-      //   // create a file 
-      //   char filename[200];
-      //   sprintf(filename, "%s.visc_debug.step_%d.iter_%d.cpu_%d",E->control.data_file, E->monitor.solution_cycles, E->viscosity.iterate, E->parallel.me);
-      //   FILE *fp = fopen(filename, "w");
-      //   if (fp == NULL) {
-      //     fprintf(stderr, "Error opening file %s\n", filename);
-      //     return;
-      //   }
-      //   for (m=1;m<=E->sphere.caps_per_proc;m++) {
-      //     for(e=1;e<=nel;e++)   {
-      //       fprintf(fp, "%d %d %e %e %e %e\n", e, E->mat[m][e], E->S2inv[m][e], E->evi_o[E->mesh.levmax][m][e], EEta[m][(e-1)*vpts + 1], E->EVold[m][e]);
-      //     }
-      //   }
-
-      //   fclose(fp);
-      // }
 
     return;
 }
@@ -1783,9 +1749,9 @@ void stress_2_inv(E,eedot,SQRT,iterate)
       }
 
       /*
-      Concern: For iterate == 1, i.e., the second iteration, the EVolder is 1 for all elements.
+      Concern: For iteration == 1, i.e., the second iteration, the EVolder is 1 for all elements.
                 Is this good? Should we use Eold only for iteration == 1?
-                e.g. if (iterate == 1) visc1 = E->EVold[m][e];
+                e.g. if (iteration == 1) visc1 = E->EVold[m][e];
       */
       if (iterate <= 2)
         visc1=E->EVold[m][e];  // for the first nonlinear iteration, only EVold is available?

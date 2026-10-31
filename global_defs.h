@@ -326,7 +326,7 @@ struct SPHERE   {
   double *area1[MAX_LEVELS][NCS];
   double *angle1[MAX_LEVELS][NCS][5];
 
-  double *R[MAX_LEVELS];
+  double *R[MAX_LEVELS],*rr;
   double ro,ri;
   struct CAP cap[NCS];
 
@@ -334,6 +334,7 @@ struct SPHERE   {
   double *sphc_init_load,*sphs_init_load;  // add by tao: for initial load potential.
   double **sphc_c, **sphs_c; // add by tao, phi_c, increase the r dimension to 300.
   double **sphc_v, **sphs_v; // add by tao, phi_v, calculate_potential_comp
+  double **tables_rr;
   int nox;
   int noy;
   int noz;
@@ -475,16 +476,18 @@ struct CONTROL {
     char data_prefix[50];
     char data_prefix_old[50];
 
-    char data_dir[150];
-    char data_dir_old[150];
+    char data_dir[300];
+    char data_dir_old[300];
 
-    char data_file[200];
-    char data_file1[200];
-    char data_file2[200];
-    char old_P_file[200];
+    char data_file[300];
+    char data_file1[300];
+    char data_file2[300];
+    char old_P_file[300];
 
     char PROBLEM_TYPE[20]; /* one of ... */
     int CONVECTION;
+    char seism_den_file[300];
+    char seism_temp_file[300];
     int stokes;
     int restart;
     int post_p;
@@ -557,7 +560,7 @@ struct CONTROL {
   int nrlayer[20],rlayers;
    double tole_comp;
 
-    char coor_file[100];
+    char coor_file[300];
 
   //int remove_hor_buoy_avg;
 
@@ -629,7 +632,7 @@ struct CONTROL {
 
 struct REF_STATE {
     int choice;
-    char filename[200];
+    char filename[300];
     double *rho;
     double *thermal_expansivity;
     double *heat_capacity;
@@ -872,6 +875,7 @@ struct All_variables {
     float *elambda_o[MAX_LEVELS][NCS],*esmu_o[MAX_LEVELS][NCS],*evi_o[MAX_LEVELS][NCS];
 	float *grav[MAX_LEVELS][NCS];  // add by tao: egrav ele_to_nodes -> grav, used in force term.; 
 	// comment by tao: geruo use a subroutine compute_g to get it and egrav
+    float *rho_jump1D[MAX_LEVELS];
 
     int num_zero_resid[MAX_LEVELS][NCS];
     int *zero_resid[MAX_LEVELS][NCS];

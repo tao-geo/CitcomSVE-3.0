@@ -98,7 +98,7 @@ void assemble_forces(struct All_variables *E, int count)
   double elt_f[24],elt_ps[24],temp1;
   int m,a,e,i;
 
-  void get_buoyancy();
+  void get_buoyancy_seismo();
   void get_elt_f();
   void get_elt_ps();
   void get_elt_tr();
@@ -131,8 +131,6 @@ void assemble_forces(struct All_variables *E, int count)
   double CPU_time0(),time;
 
 
-//  get_buoyancy(E,E->buoyancy);
-//
    if (been_here==0)   {  // initialize array F0
         for(m=1;m<=E->sphere.caps_per_proc;m++)   {
             F0[m]= (double *)malloc((neq+1)*sizeof(double));
@@ -141,8 +139,6 @@ void assemble_forces(struct All_variables *E, int count)
         been_here ++;
     }
 
-  for (i=0;i<24;i++)
-     elt_f[i] = 0.0;
 
 // Set slice.surf/botm[2] for use in get_potential:
    get_boundary_forces(E,count);
@@ -153,41 +149,62 @@ void assemble_forces(struct All_variables *E, int count)
 
        // calculate E->slice.oceanload according to sea level equation
        //  (based on E->potential[0] and E->slice.surf[3])
-	if (E->ve_data_cont.SLE)
-      		get_dynamic_oceanload(E,count);
+   if (E->ve_data_cont.SLE)
+       get_dynamic_oceanload(E,count);
 
     // Get height of load above geoid, and put it in
     //   E->slice.load[1][m][j]  and   E->slice.load[3][m][j]
     //>>>> modify by tao:
-    if(E->ve_data_cont.compressible){
-			append_multi_boundary_forces(E);
-    	}
-	else{
-   			append_boundary_forces(E); 
-		}
+   if(E->ve_data_cont.compressible)  {
+         append_multi_boundary_forces(E);
+     }
+   else {
+         append_boundary_forces(E); 
+     }
 
 	//<<<< end tao
 
-  if (count==0)
+  if (count==0)   {
+
    for(m=1;m<=E->sphere.caps_per_proc;m++)    {
         for(a=0;a<neq;a++)  F0[m][a] = zero;
         for (e=1;e<=nel;e++)  {
 
-//            get_elt_f(E,e,elt_f,1,m);
-              get_elt_ps(E,e,elt_ps,1,m);
+            get_elt_ps(E,e,elt_ps,1,m);
 
             for(a=1;a<=ends;a++)  {
                 node = E->ien[m][e].node[a];
                 p=(a-1)*dims;
                 a1=E->id[m][node].doff[1];
-                F0[m][a1] += /*elt_f[p] +*/ elt_ps[p];
+                F0[m][a1] += elt_ps[p];
                 a2=E->id[m][node].doff[2];
-                F0[m][a2] += /*elt_f[p+1] +*/ elt_ps[p+1];
+                F0[m][a2] += elt_ps[p+1];
                 a3=E->id[m][node].doff[3];
-                F0[m][a3] += /*elt_f[p+2] +*/ elt_ps[p+2];
+                F0[m][a3] += elt_ps[p+2];
                 }
              }
-          }     /* end for m, if (count==0) */
+          }     /* end for m */
+
+     if(E->control.CONVECTION) {
+       get_buoyancy_seismo(E,E->buoyancy);
+       for(m=1;m<=E->sphere.caps_per_proc;m++)    {
+        for (e=1;e<=nel;e++)  {
+            get_elt_f(E,e,elt_f,1,m);
+            for(a=1;a<=ends;a++)  {
+                node = E->ien[m][e].node[a];
+                p=(a-1)*dims;
+                a1=E->id[m][node].doff[1];
+                F0[m][a1] -= elt_f[p] ;
+                a2=E->id[m][node].doff[2];
+                F0[m][a2] -= elt_f[p+1];
+                a3=E->id[m][node].doff[3];
+                F0[m][a3] -= elt_f[p+2];
+                }
+             }
+          }     /* end for m */
+        }     /* end for mantle buoyancy */
+
+      }     /*(count==0) */
 
 
      // for elements that are at the surface or CMB or density interfaces:
@@ -195,38 +212,20 @@ void assemble_forces(struct All_variables *E, int count)
     for(a=0;a<neq;a++)
       E->F[m][a] = 0.0;
     for (e=1;e<=nel;e++)  {
-           for (p=0;p<n;p++) elt_f[p] = zero;
-		   if(E->ve_data_cont.compressible){
-				load_boundary_forces(E,e,elt_f,m); 
-				for(a=1;a<=ends;a++)		  {
-					 node = E->ien[m][e].node[a];
-					 p=(a-1)*dims;
-					 a1=E->id[m][node].doff[1];
-					 E->F[m][a1] += elt_f[p];
-					 a2=E->id[m][node].doff[2];
-					 E->F[m][a2] += elt_f[p+1];
-					 a3=E->id[m][node].doff[3];
-					 E->F[m][a3] += elt_f[p+2];
-				 }
-		   	}
-		   else{
-		   		if (   e%E->lmesh.elz==0 		// element at surface
-				   || (e-1)%E->lmesh.elz==0  )	{	// element at CMB
-		           load_boundary_forces(E,e,elt_f,m); // uses slice.load[1] and [3]
-		           for(a=1;a<=ends;a++)          {
-		                node = E->ien[m][e].node[a];
-		                p=(a-1)*dims;
-		                a1=E->id[m][node].doff[1];
-		                E->F[m][a1] += elt_f[p];
-		                a2=E->id[m][node].doff[2];
-		                E->F[m][a2] += elt_f[p+1];
-		                a3=E->id[m][node].doff[3];
-		                E->F[m][a3] += elt_f[p+2];
-		            } 
-			  }
-		   	}
-      } 
-  }       /* end for m */
+        for (p=0;p<n;p++) elt_f[p] = zero;
+               load_boundary_forces(E,e,elt_f,m); // for both compressible and imcomp
+               for (a=1;a<=ends;a++) {
+                  node = E->ien[m][e].node[a];
+                  p=(a-1)*dims;
+                  a1=E->id[m][node].doff[1];
+                  E->F[m][a1] += elt_f[p];
+                  a2=E->id[m][node].doff[2];
+                  E->F[m][a2] += elt_f[p+1];
+                  a3=E->id[m][node].doff[3];
+                  E->F[m][a3] += elt_f[p+2];
+                  }
+            }    //end for el
+          }       /* end for m */
 
   E->monitor.fdotf = sqrt(global_vdot(E, E->F, E->F, lev));
   for(m=1;m<=E->sphere.caps_per_proc;m++)
@@ -1365,23 +1364,30 @@ void get_elt_f(E,el,elt_f,bcs,m)
   unsigned int type;
   const unsigned int vbc_flag[] = {0, VBX, VBY, VBZ};
 
-  double force[9],force_at_gs[9],elt_k[24*24];
-
+  double factor,force[9],force_at_gs[9],elt_k[24*24];
+  static double stress_scaling;
+  static int been_here=0;
 
   const int dims=E->mesh.nsd;
   const int n=loc_mat_size[dims];
   const int ends=enodes[dims];
   const int vpts=vpoints[dims];
 
-  es = (el-1)/E->lmesh.elz + 1;
+  if (been_here==0) {
+     stress_scaling = E->data.density*E->data.grav_acc*E->sphere.dradius/E->ve_data_cont.shear_mod;
+     been_here=1;
+  }
+
+  factor = stress_scaling*E->egrav[E->mesh.levmax][m][el];
 
   if ((el-1)%E->lmesh.elz==0)
       construct_c3x3matrix_el(E,el,&E->element_Cc,&E->element_Ccx,E->mesh.levmax,m,0);
 
   for(p=0;p<n;p++) elt_f[p] = 0.0;
 
+      // buoyancy here is dimensionless delta_rho
   for(p=1;p<=ends;p++)
-    force[p] = E->buoyancy[m][E->ien[m][el].node[p]];
+    force[p] = E->buoyancy[m][E->ien[m][el].node[p]]*factor;
 
   for(j=1;j<=vpts;j++)       {   /*compute force at each int point */
     force_at_gs[j] = 0.0;
