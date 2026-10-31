@@ -1,0 +1,5 @@
+
+## Oct 30, 2026
+
+Shijie add the internal load function (however, it may not work yet).
+He also changed the way potential was calculated by combining divergence term with buoyancy force.
